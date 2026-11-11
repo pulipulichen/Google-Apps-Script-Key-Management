@@ -20,6 +20,7 @@
 [鑰匙管理資料庫](https://docs.google.com/spreadsheets/d/1vXwer7b9briUVHCn-wx-iyb6X-m62PNwQMnFPX7JItw/edit)
 
 - **key**：ID、名稱、區域、存放位置。ID 預設是鑰匙 RFID（例如 0001）；如果實際掃描 UID 不同，才另外新增 **RFID_UID** 欄位。
+- **member**：人員 RFID 白名單，使用 `id` 比對卡號、`member_name` 記錄姓名。選擇人員 RFID 時會先驗證；不在名單內則顯示錯誤、自動切回手寫簽名，並且在借出寫入前由後端再次驗證。
 - **loan**：借出時新增一列、歸還時更新同一列的 returned_at、return_rfid_uid、status。借用人的 RFID 存在 borrow_rfid_uid，或使用 borrow_signature_file_id 指向簽名 PNG。
 - **log**：成功借出/歸還時新增稽核紀錄。掃描的鑰匙 RFID 存在 rfid_uid。
 

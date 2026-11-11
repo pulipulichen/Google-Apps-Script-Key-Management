@@ -1,0 +1,7 @@
+# Local clasp bindings, credentials and generated dependencies
+.clasp.json
+.clasprc.json
+node_modules/
+.env
+.env.*
+.DS_Store

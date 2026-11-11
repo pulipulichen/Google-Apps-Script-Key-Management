@@ -139,3 +139,22 @@ test('multiple BORROWED loans show CONFLICT and never create another borrow or g
  assert.match(result.message,/多筆未歸還/);
  assert.deepEqual(sheets.loan.rows,before);
 });
+
+test('different key ID formats (0010 and alphanumeric) stay exact across borrow and return',()=>{
+ for(const id of ['0010','A-9X']){
+  const {ctx,sheets}=setup();
+  sheets.key.rows[1][0]=id;
+  const borrowId=crypto.randomUUID();
+  const result=ctx.borrowKey({
+   requestId:borrowId,keyId:id,scannedTag:id,identityType:'RFID',personRfid:'0010'
+  });
+  assert.equal(result.ok,true);
+  assert.equal(sheets.loan.rows[1][1],id);
+  assert.equal(sheets.log.rows[1][3],id);
+  assert.equal(sheets.log.rows[1][5],id);
+  assert.equal(ctx.getDashboard().keys[0].status,'BORROWED');
+  const returned=ctx.returnKey({requestId:crypto.randomUUID(),scannedTag:id});
+  assert.equal(returned.ok,true);
+  assert.equal(ctx.getDashboard().keys[0].status,'AVAILABLE');
+ }
+});

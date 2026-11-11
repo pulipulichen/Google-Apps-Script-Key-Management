@@ -318,9 +318,17 @@ async function receiveTransaction(result){
  const current=transaction;
  clearTransaction();
  if(!result.ok){
-   if(current.kind==='borrow'&&result.message.includes('人員 RFID 未登錄於 member 名單'))fallbackToSignature(result.message);
-   else if(current.kind==='borrow')state.borrowMessage={type:'error',text:result.message+' 已保留資料，可重試。'};
-   else state.returnMessage={type:'error',text:result.message+' 請確認後重新感應。'};
+   // 後端已明確拒絕交易，清空錯誤的鑰匙 RFID，避免下次掃描接在舊值後方。
+   // 未確認的逾時／斷線交易不會走到這裡，仍須保留原始 payload 以利核對。
+   clearTimeout(scanTimer);
+   if(current.kind==='borrow'){
+     state.pending='';
+     if(result.message.includes('人員 RFID 未登錄於 member 名單'))fallbackToSignature(result.message);
+     else state.borrowMessage={type:'error',text:result.message+' 請重新感應鑰匙 RFID。'};
+   }else{
+     state.returnTag='';
+     state.returnMessage={type:'error',text:result.message+' 請確認後重新感應。'};
+   }
    return;
  }
  if(current.kind==='borrow'){

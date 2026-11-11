@@ -1,6 +1,6 @@
 # 鑰匙管理平台資料結構（人工參考用，Apps Script 不讀取此檔案）
 # 版本：1
-# 同一份 Google 試算表包含四張工作表，不是 SQL 資料庫。
+# 同一份 Google 試算表包含四張業務表及自動建立的 transaction 表。
 # 程式中的工作表名稱與欄位順序目前寫在 Code.gs，修改此 YAML 不會自動變更程式。
 version: 1
 spreadsheet:
@@ -69,6 +69,21 @@ sheets:
       - "借出必須有 borrow_rfid_uid 或 borrow_signature_file_id 任一資料"
       - "歸還只需掃描鑰匙 RFID，歸還成功後更新 returned_at、return_rfid_uid 與 status"
 
+  transaction:
+    title: "transaction"
+    purpose: "程式首次交易時自動建立的持久交易日誌，禁止刪除或重用 request_id"
+    primary_key: "request_id"
+    columns:
+      - {name: "request_id", type: uuid, required: true, unique: true}
+      - {name: "action", type: enum, values: ["BORROW", "RETURN"]}
+      - {name: "fingerprint", type: string, notes: "請求內容 SHA-256；不保存簽名原圖"}
+      - {name: "status", type: enum, values: ["STARTED", "WRITING", "COMPLETED", "FAILED"]}
+      - {name: "result_json", type: string}
+      - {name: "updated_at", type: datetime}
+    notes:
+      - "WRITING 交易只能核對原 loan 證據，不能直接建立另一筆交易"
+      - "借出 loan_id 等於 request_id；歸還標記附加於 loan.note"
+
   log:
     title: "log"
     purpose: "成功的借出／歸還操作稽核紀錄（追加寫入）"
@@ -94,3 +109,4 @@ storage:
     child_folder_name: "鑰匙借用簽名檔"
     format: "image/png"
     privacy: "不得公開分享含簽名的資料夾"
+

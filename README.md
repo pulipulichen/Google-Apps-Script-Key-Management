@@ -24,7 +24,7 @@
 - **loan**：借出時新增一列、歸還時更新同一列的 returned_at、return_rfid_uid、status。借用人的 RFID 存在 borrow_rfid_uid，或使用 borrow_signature_file_id 指向簽名 PNG。
 - **log**：成功借出/歸還時新增稽核紀錄。掃描的鑰匙 RFID 存在 rfid_uid。
 
-**請將鑰匙 ID 與 RFID 值儲存為純文字**，保留 0001 等前導零。未填寫存放位置時，歸還畫面會顯示「尚未設定存放位置」。
+**請將鑰匙 ID 與 RFID 值儲存為純文字**，保留 0001 等前導零。存放位置允許空白；歸還畫面會直接隱藏空白的位置區塊。
 
 簽名圖片會儲存在 Google Drive 上層資料夾 ID 為 1LO7B-j7AabHl8hSG23XAEyr0lCE6kp-c 之下的「鑰匙借用簽名檔」子資料夾（首次簽名時自動建立）。請勿公開分享此資料夾。
 
@@ -65,3 +65,17 @@ clasp open
 ## 修改執行設定
 
 如需調整資料來源或簽名位置，修改 **Code.gs** 裡的 SETTINGS 常數：spreadsheetId、signatureParentFolderId、signatureFolderName、timezone。**schema.yaml 不參與執行。**
+
+
+## 送出與重試（Issue #2、#3）
+
+- 一般借出必須先選鑰匙並完成簽名，或通過 member 人員 RFID 驗證，才顯示第 3 步感應區。更換鑰匙、識別方式或清除簽名會清除舊感應資料。
+- 感應後自動提交，顯示全畫面 Loading，封鎖背景滑鼠、觸控、鍵盤及 RFID Enter；以實際後端結果解除。
+- 後端在 ScriptLock 內使用交易 ID 去重。第一次交易會自動建立 `transaction` 工作表，保存 request_id、action、fingerprint、status、result_json、updated_at。既有四表標題不需調整。不要刪除交易日誌或手動重用 ID。
+- 借出以 request_id 作為 loan_id；歸還在同次 G:L 更新中將 `[return-request:交易ID]` 附加到 loan.note，供回應遺失時確認原結果。原有備註保留。
+- 確定未寫入的錯誤保留表單、簽名與感應值，提供重試。連線錯誤或 45 秒未收到回應只表示「結果待確認」，不表示失敗；按「查詢原交易結果」確認。未登記時使用原 ID 與原資料重送，已登記時只核對原交易。
+- 待確認交易與表單暫存於同一分頁的 sessionStorage，重新載入後仍需先查詢。含簽名資料的暫存會在取得確定結果後清除。請勿在結果未確認前清除瀏覽器資料或換分頁重新借還。
+- 若交易已進入寫入階段但無法在 loan 找到完成證據，系統持續鎖定並請管理員核對，避免自動重試造成重複交易。復原成功但稽核 log 無法確認時，會提示管理員核對。
+- 本次不包含尚未實作的 VIP 借出或手機待借單配對功能。
+
+執行本機回歸測試：`node --test tests/*.test.cjs`。更新網站時必須同時同步 Code.gs 與 Index.html，再建立新的 Apps Script 部署版本。

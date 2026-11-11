@@ -79,6 +79,10 @@ function verifyMemberRfid(rawRfid) {
  */
 function borrowKey(input) {
   const r = input || {};
+  return transaction_(r.requestId, 'BORROW', r, tx => borrowKey_(r, tx));
+}
+
+function borrowKey_(r, tx) {
   const keyId = str_(r.keyId);
   const scannedTag = str_(r.scannedTag);
   const identityType = str_(r.identityType);
@@ -88,7 +92,7 @@ function borrowKey(input) {
   if (identityType === 'RFID' && !personRfid) throw new Error('請先感應人員 RFID。');
   if (identityType === 'SIGNATURE') signatureBytes_(r.signatureDataUrl);
 
-  return locked_(() => {
+  {
     const db = sheets_();
     const key = keys_(db.key).find(k => k.id === keyId);
     if (!key) throw new Error('所選鑰匙不存在。');
@@ -101,14 +105,15 @@ function borrowKey(input) {
 
     let signatureFileId = '';
     if (identityType === 'SIGNATURE') signatureFileId = storeSignature_(r.signatureDataUrl, keyId);
-    const loanId = Utilities.getUuid();
+    const loanId = tx.id;
+    tx.prepare({ok: true, name: key.name, area: key.area, location: key.location, logWarning: true});
     try {
       db.loan.appendRow([
         loanId, keyId, new Date(), identityType === 'RFID' ? personRfid : '',
         signatureFileId, '', '', '', '', '', 'BORROWED', ''
       ]);
     } catch (err) {
-      if (signatureFileId) {
+      if (signatureFileId && !tx.started) {
         try { DriveApp.getFileById(signatureFileId).setTrashed(true); } catch (_) {}
       }
       throw err;
@@ -118,15 +123,20 @@ function borrowKey(input) {
     try { appendLog_(db.log, 'BORROW', keyId, loanId, scannedTag, signatureFileId); }
     catch (err) { console.error('借出成功，log 寫入失敗：' + err); logWarning = true; }
     return {ok: true, name: key.name, area: key.area, location: key.location, logWarning: logWarning};
-  });
+  }
 }
 
 /** 還鑰匙：只有鑰匙 RFID，不要求簽名、借用人或選擇清單。 */
-function returnKey(rawTag) {
+function returnKey(input) {
+  const r = input || {};
+  return transaction_(r.requestId, 'RETURN', r, tx => returnKey_(r.scannedTag, tx));
+}
+
+function returnKey_(rawTag, tx) {
   const scannedTag = str_(rawTag);
   if (!scannedTag) throw new Error('請點選輸入欄位，再感應鑰匙。');
 
-  return locked_(() => {
+  {
     const db = sheets_();
     const key = keys_(db.key).find(k => k.rfid === scannedTag);
     if (!key) throw new Error('找不到這個 RFID 對應的鑰匙。');
@@ -136,15 +146,107 @@ function returnKey(rawTag) {
       return {ok: true, alreadyReturned: true, name: key.name,
         area: key.area, location: key.location, logWarning: false};
     }
-    // G:K：returned_at、return_rfid_uid、return_signature_file_id、return_operator、status。
-    db.loan.getRange(loan.row, 7, 1, 5).setValues([
-      [new Date(), scannedTag, '', '', 'RETURNED']
+    const note = str_(db.loan.getRange(loan.row, 12).getDisplayValues()[0][0]);
+    tx.prepare({ok: true, alreadyReturned: false, name: key.name,
+      area: key.area, location: key.location, logWarning: true});
+    // 狀態與交易標記同次寫入；回應遺失仍可核對原交易，保留原 note。
+    db.loan.getRange(loan.row, 7, 1, 6).setValues([
+      [new Date(), scannedTag, '', '', 'RETURNED', note + '\n[return-request:' + tx.id + ']']
     ]);
     let logWarning = false;
     try { appendLog_(db.log, 'RETURN', key.id, loan.loanId, scannedTag, ''); }
     catch (err) { console.error('歸還成功，log 寫入失敗：' + err); logWarning = true; }
     return {ok: true, alreadyReturned: false, name: key.name,
       area: key.area, location: key.location, logWarning: logWarning};
+  }
+}
+
+/** 持久交易日誌；與 loan 一起受 ScriptLock 保護，不使用會過期的 Cache。 */
+const TRANSACTION_HEADERS = ['request_id','action','fingerprint','status','result_json','updated_at'];
+function transactionSheet_() {
+  const book = SpreadsheetApp.openById(SETTINGS.spreadsheetId);
+  let sheet = book.getSheetByName('transaction');
+  if (!sheet) {
+    sheet = book.insertSheet('transaction');
+    sheet.appendRow(TRANSACTION_HEADERS);
+    SpreadsheetApp.flush();
+  }
+  checkHeader_(sheet, TRANSACTION_HEADERS);
+  return sheet;
+}
+function transactionId_(value) {
+  const id = str_(value);
+  if (!/^[a-zA-Z0-9-]{20,80}$/.test(id)) throw new Error('缺少有效交易 ID，請更新網頁後重試。');
+  return id;
+}
+function transactionRow_(sheet, id) {
+  const last = sheet.getLastRow();
+  if (last < 2) return null;
+  const rows = sheet.getRange(2, 1, last - 1, 6).getDisplayValues();
+  const index = rows.findIndex(row => row[0] === id);
+  return index < 0 ? null : {row: index + 2, values: rows[index]};
+}
+function writeTransaction_(sheet, row, status, result) {
+  sheet.getRange(row, 4, 1, 3).setValues([[status, JSON.stringify(result), new Date()]]);
+  SpreadsheetApp.flush();
+}
+function transactionResult_(sheet, record) {
+  const v = record.values;
+  if (v[3] === 'COMPLETED' || v[3] === 'FAILED') return JSON.parse(v[4]);
+  // STARTED/WRITING 都不可盲目重送；只依 loan 中的原交易證據確認。
+  if (v[4]) {
+    const loan = SpreadsheetApp.openById(SETTINGS.spreadsheetId).getSheetByName('loan');
+    const rows = loan.getLastRow() < 2 ? [] : loan.getRange(2, 1, loan.getLastRow() - 1, 12).getDisplayValues();
+    const found = rows.some(r => v[1] === 'BORROW' ? r[0] === v[0] :
+      str_(r[11]).split('\n').includes('[return-request:' + v[0] + ']'));
+    if (found) {
+      const result = JSON.parse(v[4]);
+      writeTransaction_(sheet, record.row, 'COMPLETED', result);
+      return result;
+    }
+  }
+  return {ok: false, pending: true, message: '結果待確認，請查詢原交易，勿重新借還；若持續未確認，請通知管理員核對 transaction 與 loan。'};
+}
+function getTransactionResult(requestId) {
+  const id = transactionId_(requestId);
+  return locked_(() => {
+    const sheet = transactionSheet_(), record = transactionRow_(sheet, id);
+    return record ? transactionResult_(sheet, record) : {ok: false, notFound: true};
+  });
+}
+function transaction_(requestId, action, input, callback) {
+  const id = transactionId_(requestId);
+  // 固定欄位順序，禁止同 ID 改成另一組資料；不在日誌保存簽名原圖。
+  const canonical = JSON.stringify([action, str_(input.keyId), str_(input.scannedTag),
+    str_(input.identityType), str_(input.personRfid), str_(input.signatureDataUrl)]);
+  const fingerprint = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, canonical)
+    .map(b => ('0' + (b & 255).toString(16)).slice(-2)).join('');
+  return locked_(() => {
+    const sheet = transactionSheet_(), existing = transactionRow_(sheet, id);
+    if (existing) {
+      if (existing.values[1] !== action || existing.values[2] !== fingerprint) {
+        throw new Error('交易 ID 已用於其他資料，不能重複使用。');
+      }
+      return transactionResult_(sheet, existing);
+    }
+    sheet.appendRow([id, action, fingerprint, 'STARTED', '', new Date()]);
+    SpreadsheetApp.flush();
+    const row = sheet.getLastRow();
+    const tx = {id: id, started: false, prepare: result => {
+      writeTransaction_(sheet, row, 'WRITING', result);
+      tx.started = true;
+    }};
+    let result;
+    try { result = callback(tx); }
+    catch (err) {
+      if (tx.started) return {ok: false, pending: true, message: '結果待確認，請查詢原交易結果。'};
+      result = {ok: false, message: err.message || String(err)};
+      writeTransaction_(sheet, row, 'FAILED', result);
+      return result;
+    }
+    SpreadsheetApp.flush();
+    writeTransaction_(sheet, row, 'COMPLETED', result);
+    return result;
   });
 }
 
@@ -268,3 +370,4 @@ function checkSetup() {
   console.log('檢查完成：' + result.keys.length + ' 把鑰匙');
   return result;
 }
+

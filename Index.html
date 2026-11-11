@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>鑰匙管理平台</title>
+  <style>
+    :root{font:15px/1.55 system-ui,-apple-system,"Noto Sans TC",sans-serif;color:#1e293b;background:#f4f7fb}
+    *{box-sizing:border-box}body{margin:0}button,input{font:inherit}button{cursor:pointer}
+    .app{max-width:1120px;margin:auto;padding:24px 18px 60px}
+    header{display:flex;align-items:center;gap:12px;margin-bottom:19px}
+    .logo{width:47px;height:47px;border-radius:13px;background:#2563eb;color:white;display:grid;place-items:center;font-size:25px}
+    h1{font-size:23px;margin:0}.sub{font-size:13px;color:#64748b;margin-top:3px}
+    nav{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:20px}
+    .tab{padding:14px 5px;background:white;border:1px solid #dce3ed;border-radius:10px;font-weight:750;color:#334155}
+    .tab.active{background:#e9f1ff;border-color:#2563eb;color:#1d4ed8}
+    h2{font-size:23px;margin:0 0 5px}.intro{margin:0 0 18px;font-size:13px;color:#64748b}
+    .columns{display:grid;grid-template-columns:1fr 1.08fr;gap:15px;align-items:start}
+    .card{background:white;border:1px solid #dfe6f0;border-radius:13px;padding:19px;min-width:0}
+    .title{display:flex;align-items:center;gap:8px;font-weight:760;margin-bottom:13px}
+    .step{width:26px;height:26px;border-radius:50%;background:#e8f0ff;color:#1d4ed8;display:grid;place-items:center;flex:none;font-size:13px}
+    .muted{color:#64748b;font-size:12px}.input{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:9px;background:white;color:#1e293b;outline:none}
+    .input:focus{border-color:#2563eb;box-shadow:0 0 0 3px #2563eb20}
+    .keylist{max-height:360px;overflow:auto;display:grid;gap:8px;margin-top:11px}
+    .key{width:100%;display:flex;align-items:center;text-align:left;gap:10px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;color:#1e293b}
+    .key.selected{background:#eff6ff;border-color:#2563eb}.keyname{font-weight:730}.keyarea{font-size:12px;color:#64748b}
+    .pill{font-size:11px;border-radius:6px;padding:4px 7px;white-space:nowrap;font-weight:700}
+    .free{color:#047857;background:#dcfce7}.out{color:#9a6700;background:#fef3c7}
+    .filters{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}
+    .filter{background:#f8fafc;border:1px solid #dce3ed;border-radius:50px;padding:7px 12px;color:#334155;font-size:12px}
+    .filter.selected{background:#dbeafe;border-color:#2563eb;color:#1d4ed8}
+    .methods{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+    .method{padding:11px 5px;border:1px solid #d5deeb;border-radius:9px;background:#f8fafc;font-size:12px;font-weight:750;color:#334155}
+    .method.selected{background:#e9f1ff;border-color:#2563eb;color:#1d4ed8}
+    .selectedkey{border:1px solid #dbe5f0;background:#f8fafc;border-radius:9px;padding:11px;margin-bottom:12px}
+    .signature{position:relative;background:white;border:1px dashed #94a3b8;border-radius:9px;overflow:hidden}
+    canvas{display:block;width:100%;height:135px;touch-action:none;cursor:crosshair}
+    .signhint{pointer-events:none;position:absolute;inset:52px 0 auto;text-align:center;color:#94a3b8;font-size:13px}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+    .btn{padding:9px 12px;border:1px solid #cbd5e1;border-radius:9px;background:white;color:#334155;font-weight:650;font-size:12px}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .scanner{border:2px dashed #3b82f6;background:#eff6ff;border-radius:14px;padding:19px;margin-top:15px}
+    .scanner.focused{border:2px solid #059669;box-shadow:0 0 0 3px #10b98127}
+    .scanheading{font-size:19px;text-align:center;font-weight:850;color:#1d4ed8}
+    .scansub{text-align:center;color:#64748b;font-size:13px;margin:6px 0 13px}
+    .scaninput{width:100%;font-size:20px;font-weight:700;text-align:center;padding:15px 10px;border:2px solid #3b82f6;border-radius:10px;background:white;color:#1e293b;outline:none}
+    .scaninput:focus{border-color:#059669}.focuslabel{text-align:center;font-size:12px;margin-top:9px;color:#b45309;font-weight:700}
+    .focused .focuslabel{color:#047857}
+    .alert{border:1px solid #94a3b8;background:white;border-radius:10px;padding:13px;margin-bottom:15px;font-size:13px;line-height:1.7}
+    .alert.success{background:#f0fdf4;border-color:#86efac;color:#166534}
+    .alert.error{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+    .alert.info{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+    .checklist{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#64748b;margin-top:12px}
+    .checklist .ok{color:#047857;font-weight:750}
+    .returnbox{max-width:740px;margin:auto;text-align:center;padding:25px}
+    .returnresult{max-width:740px;margin:16px auto 0;padding:22px;background:#f0fdf4;color:#166534;border:2px solid #86efac;border-radius:14px;text-align:center}
+    .returnname{font-size:27px;font-weight:850;margin:11px 0}
+    .location{padding:16px;background:white;border-radius:10px;margin-top:16px;color:#14532d}
+    .location strong{font-size:24px;display:block;margin-top:5px}
+    .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:15px}
+    .stat{padding:16px;background:white;border:1px solid #e2e8f0;border-radius:11px}
+    .stat strong{display:block;font-size:28px;margin-top:3px}
+    .detail{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #e2e8f0}
+    .detail span{color:#64748b}.detail strong{text-align:right}
+    .empty{text-align:center;color:#64748b;font-size:13px;padding:25px}
+    .busy{position:fixed;bottom:14px;right:14px;background:#0f172a;color:white;border-radius:9px;padding:12px 15px;font-size:13px;box-shadow:0 8px 30px #0f172a35}
+    .hidden{display:none!important}
+    @media(max-width:720px){.app{padding:13px 11px 50px}.columns{grid-template-columns:1fr}.card{padding:14px}.keylist{max-height:220px}.tab{font-size:12px;padding:12px 3px}.scanheading{font-size:17px}.scanner{padding:13px}.stat{padding:11px}.stat strong{font-size:25px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header><div class="logo">🔑</div><div><h1>鑰匙管理平台</h1><div class="sub">借鑰匙 · 還鑰匙 · 查看鑰匙狀況</div></div></header>
+  <nav aria-label="功能入口">
+    <button type="button" class="tab selected active" data-tab="borrow">↗ 借鑰匙</button>
+    <button type="button" class="tab" data-tab="return">↙ 還鑰匙</button>
+    <button type="button" class="tab" data-tab="status">▤ 鑰匙狀況</button>
+  </nav>
+  <main id="main"><section class="card">正在讀取鑰匙資料……</section></main>
+</div>
+<div id="busy" class="busy hidden" role="status">正在與 Google Sheet 同步……</div>
+<script>
+(function(){
+'use strict';
+const main=document.getElementById('main'),busy=document.getElementById('busy');
+const state={page:'borrow',keys:[],loading:true,working:false,selected:'',
+  query:'',area:'全部',method:'SIGNATURE',signature:'',signed:false,person:'',pending:'',
+  borrowMessage:null,returnMessage:null,returnResult:null,statusQuery:'',statusFilter:'ALL',detail:''};
+let scanTimer=null,personTimer=null,sequence=0;
+const esc=x=>String(x===null||x===undefined?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const keyById=id=>state.keys.find(k=>k.id===id);
+const available=()=>state.keys.filter(k=>k.status==='AVAILABLE');
+const pill=k=>'<span class="pill '+(k.status==='AVAILABLE'?'free':'out')+'">'+(k.status==='AVAILABLE'?'可借用':'已借出')+'</span>';
+const alertBox=m=>m?'<div class="alert '+m.type+'" role="status">'+esc(m.text)+'</div>':'';
+function setWorking(x){state.working=!!x;busy.classList.toggle('hidden',!x);}
+function call(name,...args){return new Promise((resolve,reject)=>{
+  google.script.run.withSuccessHandler(resolve).withFailureHandler(e=>reject(new Error(e&&e.message||String(e))))[name](...args);
+});}
+async function refresh(){
+  try{setWorking(true);const r=await call('getDashboard');state.keys=r.keys||[];state.loading=false;render();}
+  catch(e){state.loading=false;errorMessage(e.message);}
+  finally{setWorking(false);}
+}
+function errorMessage(text){
+ if(state.page==='borrow')state.borrowMessage={type:'error',text:text};
+ else state.returnMessage={type:'error',text:text};
+ render();
+}
+function render(){
+ document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===state.page));
+ main.innerHTML=state.loading?'<section class="card">讀取鑰匙資料中……</section>':
+   state.page==='borrow'?borrowHtml():state.page==='return'?returnHtml():statusHtml();
+ if(state.page==='borrow'&&state.method==='SIGNATURE')attachSignature();
+ if(state.page==='return'&&!state.loading&&!state.working)focusReturn();
+}
+function filters(){
+ const areas=['全部',...new Set(state.keys.map(k=>k.area).filter(Boolean))];
+ return '<div class="filters">'+areas.map(a=>'<button type="button" class="filter '+(state.area===a?'selected':'')+'" data-area="'+esc(a)+'">'+esc(a)+'</button>').join('')+'</div>';
+}
+function keyRows(mode){
+ const search=(mode==='borrow'?state.query:state.statusQuery).trim().toLowerCase();
+ const arr=state.keys.filter(k=>(mode==='status'||k.status==='AVAILABLE')&&
+   (mode!=='borrow'||state.area==='全部'||state.area===k.area)&&
+   (mode!=='status'||state.statusFilter==='ALL'||k.status===state.statusFilter)&&
+   (k.name.toLowerCase().includes(search)||(k.area||'').toLowerCase().includes(search)));
+ if(!arr.length)return '<div class="empty">沒有符合條件的鑰匙</div>';
+ return arr.map(k=>'<button type="button" class="key '+((mode==='borrow'?state.selected:state.detail)===k.id?'selected':'')+'" data-key="'+esc(k.id)+'" data-mode="'+mode+'"><span style="font-size:22px">🔑</span><span style="flex:1;min-width:0"><div class="keyname">'+esc(k.name)+'</div><div class="keyarea">'+esc(k.area||'未分類')+'</div></span>'+pill(k)+'</button>').join('');
+}
+function scanner(which){
+ return '<div class="scanner" id="'+which+'-scanner"><div class="scanheading">👇 請先點選此處，再感應鑰匙 RFID</div>'+
+ '<div class="scansub">RFID 讀卡機模擬鍵盤輸入；讀取完成自動驗證，無需按送出。</div>'+
+ '<input type="text" class="scaninput" id="'+which+'-scan" autocomplete="off" spellcheck="false" aria-label="點選後感應鑰匙 RFID" placeholder="點此輸入框，等待 RFID 感應">'+
+ '<div class="focuslabel" id="'+which+'-focus">⚠ 請先點選上方輸入框</div></div>';
+}
+function identityHtml(){
+ const k=keyById(state.selected);
+ return '<div class="title"><span class="step">2</span>借用人識別</div>'+
+ (k?'<div class="selectedkey"><div class="muted">選擇的鑰匙</div><strong>'+esc(k.name)+'</strong> · '+esc(k.area||'未分類')+'</div>':'<div class="muted">請先從左側選擇要借出的鑰匙。</div>')+
+ '<div class="methods"><button type="button" class="method '+(state.method==='SIGNATURE'?'selected':'')+'" data-method="SIGNATURE">✎ 手寫簽名（預設）</button>'+
+ '<button type="button" class="method '+(state.method==='RFID'?'selected':'')+'" data-method="RFID">▣ 人員 RFID</button></div>'+
+ (state.method==='SIGNATURE'?
+  '<div class="signature"><canvas id="signature" width="800" height="280" aria-label="手寫簽名區"></canvas>'+(state.signed?'':'<span class="signhint">請在此手寫簽名</span>')+'</div>'+
+  '<div class="row" style="justify-content:space-between"><span class="muted">'+(state.signed?'✓ 已簽名':'可使用滑鼠、觸控筆或手指')+'</span><button type="button" class="btn" data-clear>清除重簽</button></div>'
+  :'<label for="person" class="muted" style="display:block;margin:10px 0 7px">點選此處，感應借用人的 RFID 卡</label><input class="input" id="person" value="'+esc(state.person)+'" placeholder="人員 RFID 編號">');
+}
+function checks(){
+ return '<div class="checklist"><span class="'+(state.selected?'ok':'')+'">'+(state.selected?'✓':'○')+' 已選鑰匙</span>'+
+ '<span class="'+(ready()?'ok':'')+'">'+(ready()?'✓':'○')+' 借用人識別</span>'+
+ '<span class="'+(state.pending?'ok':'')+'">'+(state.pending?'✓':'○')+' 鑰匙 RFID 正確</span></div>';
+}
+function borrowHtml(){
+ return '<h2>借鑰匙</h2><p class="intro">選擇鑰匙 → 手寫簽名（預設）→ 點選 RFID 感應框並掃描，自動完成借出。</p>'+
+ alertBox(state.borrowMessage)+
+ '<div class="columns"><section class="card"><div class="title"><span class="step">1</span>選擇鑰匙 <span class="muted" style="margin-left:auto">'+available().length+' 把可借</span></div>'+
+ '<input id="borrow-search" class="input" type="search" placeholder="🔍 搜尋鑰匙名稱或區域" value="'+esc(state.query)+'">'+filters()+
+ '<div id="keylist" class="keylist">'+keyRows('borrow')+'</div></section>'+
+ '<section class="card">'+identityHtml()+'</section></div>'+
+ '<section class="card" style="margin-top:15px"><div class="title"><span class="step">3</span>感應鑰匙 RFID</div>'+scanner('borrow')+checks()+
+ '<p class="muted" style="margin-top:12px">感應的 ID 必須與所選鑰匙內部 ID 一致，且借用人識別資料完整，才會自動借出。</p></section>';
+}
+function returnHtml(){
+ return '<h2>還鑰匙</h2><p class="intro">只需感應鑰匙 RFID，不必選擇鑰匙、填寫人員資料或簽名。</p>'+
+ '<section class="card returnbox"><div style="font-size:41px">📡</div><h2>感應鑰匙即可歸還</h2><p class="muted">自動完成登記，並告知管理人員應存放的位置。</p>'+
+ scanner('return')+'</section>'+
+ (state.returnResult?'<section class="returnresult" role="status"><div style="font-size:18px;font-weight:800">'+(state.returnResult.alreadyReturned?'ℹ 此鑰匙已是可借用狀態':'✓ 歸還成功')+'</div>'+
+ '<div class="returnname">🔑 '+esc(state.returnResult.name)+'</div><div>區域：'+esc(state.returnResult.area||'未分類')+'</div>'+
+ '<div class="location">請將鑰匙放回<strong>'+esc(state.returnResult.location||'尚未設定存放位置')+'</strong></div>'+
+ '<p style="font-size:12px">可以繼續感應下一把鑰匙</p>'+
+ (state.returnResult.logWarning?'<div>注意：loan 已更新，但 log 寫入失敗，請通知管理員。</div>':'')+'</section>':
+ state.returnMessage?'<div style="max-width:740px;margin:15px auto">'+alertBox(state.returnMessage)+'</div>':'');
+}
+function statusHtml(){
+ const count=state.keys.length-available().length,k=keyById(state.detail);
+ return '<h2>鑰匙狀況</h2><p class="intro">查看目前可借用及已借出的鑰匙。資料來自 Google Sheet。</p>'+
+ '<div class="stats"><div class="stat">鑰匙總數<strong>'+state.keys.length+'</strong></div>'+
+ '<div class="stat">可借用<strong style="color:#059669">'+available().length+'</strong></div>'+
+ '<div class="stat">已借出<strong style="color:#b45309">'+count+'</strong></div></div>'+
+ '<button type="button" class="btn" data-refresh style="margin-bottom:14px">↻ 重新整理資料</button>'+
+ '<div class="columns"><section class="card"><div class="title">鑰匙清單</div>'+
+ '<input id="status-search" class="input" placeholder="🔍 搜尋名稱或區域" value="'+esc(state.statusQuery)+'">'+
+ '<div class="filters">'+[['ALL','全部'],['AVAILABLE','可借用'],['BORROWED','已借出']].map(([v,t])=>'<button type="button" class="filter '+(state.statusFilter===v?'selected':'')+'" data-filter="'+v+'">'+t+'</button>').join('')+'</div>'+
+ '<div class="keylist" id="status-keys">'+keyRows('status')+'</div></section>'+
+ '<section class="card"><div class="title">鑰匙詳細資訊</div>'+
+ (k?'<h2 style="font-size:19px">'+esc(k.name)+'</h2><div style="margin-top:10px">'+pill(k)+'</div>'+
+ [['區域',k.area||'未分類'],['存放位置',k.location||'尚未設定'],['最近借出時間',k.borrowedAt||'—']].map(([a,b])=>'<div class="detail"><span>'+a+'</span><strong>'+esc(b)+'</strong></div>').join(''):
+ '<div class="empty">選擇左側鑰匙，即可查看詳細資料。</div>')+
+ '</section></div>';
+}
+function ready(){return state.method==='SIGNATURE'?state.signed:!!state.person.trim();}
+function drawList(mode){const box=document.getElementById(mode==='borrow'?'keylist':'status-keys');if(box)box.innerHTML=keyRows(mode);}
+function attachSignature(){
+ const c=document.getElementById('signature');if(!c)return;
+ const ctx=c.getContext('2d');ctx.strokeStyle='#1e40af';ctx.lineWidth=4;ctx.lineJoin='round';ctx.lineCap='round';
+ if(state.signature){const im=new Image();im.onload=()=>ctx.drawImage(im,0,0,c.width,c.height);im.src=state.signature;}
+ let down=false,distance=0,last=null;
+ const xy=ev=>{const r=c.getBoundingClientRect();return {x:(ev.clientX-r.left)*c.width/r.width,y:(ev.clientY-r.top)*c.height/r.height};};
+ c.addEventListener('pointerdown',ev=>{down=true;distance=0;last=xy(ev);ctx.beginPath();ctx.moveTo(last.x,last.y);c.parentElement.querySelector('.signhint')?.remove();try{c.setPointerCapture(ev.pointerId);}catch(_){}});
+ c.addEventListener('pointermove',ev=>{if(!down)return;const p=xy(ev);distance+=Math.hypot(p.x-last.x,p.y-last.y);ctx.lineTo(p.x,p.y);ctx.stroke();last=p;});
+ function end(){if(!down)return;down=false;if(distance<12)return;
+   const out=document.createElement('canvas');out.width=c.width;out.height=c.height;
+   const o=out.getContext('2d');o.fillStyle='white';o.fillRect(0,0,out.width,out.height);o.drawImage(c,0,0);
+   state.signature=out.toDataURL('image/png');state.signed=true;
+   if(state.pending&&state.selected)submitBorrow();else render();
+ }
+ c.addEventListener('pointerup',end);c.addEventListener('pointercancel',end);
+}
+function focusReturn(){const input=document.getElementById('return-scan');if(input)input.focus();}
+function setFocus(input,focus){
+ const kind=input.id.startsWith('borrow')?'borrow':'return';
+ const box=document.getElementById(kind+'-scanner'),label=document.getElementById(kind+'-focus');
+ if(box)box.classList.toggle('focused',focus);
+ if(label)label.textContent=focus?'✓ 已點選，可以感應鑰匙 RFID':'⚠ 請先點選上方輸入框';
+}
+async function scan(kind,value){
+ const tag=String(value||'').trim();
+ if(!tag||state.working)return;
+ const input=document.getElementById(kind+'-scan');if(input)input.value='';
+ if(kind==='return'){
+   state.returnResult=null;state.returnMessage=null;setWorking(true);
+   try{state.returnResult=await call('returnKey',tag);state.keys=(await call('getDashboard')).keys||[];}
+   catch(e){state.returnMessage={type:'error',text:e.message};}
+   finally{setWorking(false);render();focusReturn();}
+   return;
+ }
+ if(!state.selected){state.borrowMessage={type:'error',text:'請先從左側選擇要借用的鑰匙。'};render();return;}
+ const seq=++sequence;setWorking(true);
+ try{
+   const result=await call('verifyBorrowTag',{keyId:state.selected,scannedTag:tag});
+   if(seq!==sequence)return;
+   state.pending=tag;
+   state.borrowMessage={type:'info',text:'✓ 已驗證「'+result.name+'」鑰匙 RFID。'+(ready()?'正在完成借出……':'請完成借用人識別，即可自動借出。')};
+   if(ready()){await submitBorrow(true);return;}
+ }catch(e){state.pending='';state.borrowMessage={type:'error',text:e.message};}
+ finally{setWorking(false);render();}
+}
+async function submitBorrow(alreadyWorking){
+ if(!state.selected||!state.pending||!ready()||(state.working&&!alreadyWorking))return;
+ const payload={keyId:state.selected,scannedTag:state.pending,identityType:state.method,
+   personRfid:state.method==='RFID'?state.person:'',signatureDataUrl:state.method==='SIGNATURE'?state.signature:''};
+ setWorking(true);
+ try{
+   const result=await call('borrowKey',payload);
+   state.borrowMessage={type:result.logWarning?'info':'success',text:'✓ '+result.name+' 已成功借出。'+(result.logWarning?'但 log 寫入異常，請通知管理員。':'')};
+   state.selected='';state.pending='';state.signature='';state.signed=false;state.person='';
+   state.keys=(await call('getDashboard')).keys||[];
+ }catch(e){state.borrowMessage={type:'error',text:e.message};state.pending='';}
+ finally{setWorking(false);render();}
+}
+document.addEventListener('click',ev=>{
+ const b=ev.target.closest('button');if(!b)return;
+ if(b.dataset.tab){if(state.working)return;state.page=b.dataset.tab;state.returnMessage=null;render();if(state.page==='status')refresh();return;}
+ if(state.working)return;
+ if(b.dataset.key){if(b.dataset.mode==='borrow'){state.selected=b.dataset.key;state.pending='';state.borrowMessage=null;}else state.detail=b.dataset.key;render();return;}
+ if(b.hasAttribute('data-area')){state.area=b.dataset.area;render();return;}
+ if(b.dataset.method){state.method=b.dataset.method;render();if(state.pending&&ready())submitBorrow();return;}
+ if(b.hasAttribute('data-clear')){state.signature='';state.signed=false;render();return;}
+ if(b.dataset.filter){state.statusFilter=b.dataset.filter;render();return;}
+ if(b.hasAttribute('data-refresh')){refresh();return;}
+});
+document.addEventListener('input',ev=>{
+ const el=ev.target;
+ if(el.id==='borrow-search'){state.query=el.value;drawList('borrow');return;}
+ if(el.id==='status-search'){state.statusQuery=el.value;drawList('status');return;}
+ if(el.id==='person'){state.person=el.value;clearTimeout(personTimer);if(state.pending&&ready())personTimer=setTimeout(()=>submitBorrow(),650);return;}
+ if(!['borrow-scan','return-scan'].includes(el.id))return;
+ clearTimeout(scanTimer);const kind=el.id==='borrow-scan'?'borrow':'return';
+ if(el.value.trim())scanTimer=setTimeout(()=>scan(kind,el.value),750);
+});
+document.addEventListener('keydown',ev=>{
+ if(ev.key!=='Enter')return;
+ if(['borrow-scan','return-scan'].includes(ev.target.id)){
+   ev.preventDefault();clearTimeout(scanTimer);scan(ev.target.id==='borrow-scan'?'borrow':'return',ev.target.value);
+ }else if(ev.target.id==='person'&&state.pending){ev.preventDefault();clearTimeout(personTimer);submitBorrow();}
+});
+document.addEventListener('focusin',ev=>{if(ev.target.classList.contains('scaninput'))setFocus(ev.target,true);});
+document.addEventListener('focusout',ev=>{if(ev.target.classList.contains('scaninput'))setFocus(ev.target,false);});
+refresh();
+})();
+</script>
+</body>
+</html>

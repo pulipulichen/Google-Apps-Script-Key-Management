@@ -17,7 +17,7 @@ function setup(){
  const storage={setItem:(k,v)=>stored.set(k,v),getItem:k=>stored.get(k)||null,removeItem:k=>stored.delete(k)};
  const ctx=vm.createContext({console,document,google,crypto,sessionStorage:storage,window:{addEventListener(){}},setTimeout:()=>1,clearTimeout(){}});
  let script=fs.readFileSync('Index.html','utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
- script=script.replace('refresh();\n})();',`globalThis.ui={state,borrowHtml,returnHtml,canScan,setWorking,render,scan,runTransaction,checkTransaction,
+ script=script.replace('refresh();\n})();',`globalThis.ui={state,borrowHtml,returnHtml,statusHtml,pill,canScan,setWorking,render,scan,runTransaction,checkTransaction,
  get transaction(){return transaction;}};\n})();`);
  vm.runInContext(script,ctx);
  const ui=ctx.ui;ui.state.loading=false;ui.state.keys=[{id:'0001',name:'測試',area:'',status:'AVAILABLE',location:''}];
@@ -76,4 +76,24 @@ test('return errors retain scanned tag for retry',async()=>{
  const {ui,calls}=setup();ui.state.page='return';const pending=ui.scan('return','0001');
  calls[0].success({ok:false,message:'找不到鑰匙'});await pending;
  assert.equal(ui.state.returnTag,'0001');assert.match(ui.returnHtml(),/value="0001"/);assert.match(ui.returnHtml(),/data-retry-return/);
+});
+
+test('duplicate loans show a distinct error badge and are never selectable',()=>{
+ const {ui}=setup();
+ ui.state.keys[0].status='CONFLICT';
+ assert.match(ui.borrowHtml(),/0 把可借/);
+ assert.doesNotMatch(ui.borrowHtml(),/data-key="0001"/);
+ assert.match(ui.statusHtml(),/借用紀錄異常/);
+ assert.match(ui.statusHtml(),/資料異常/);
+ assert.match(ui.returnHtml(),/多筆未歸還紀錄/);
+});
+
+test('unknown active loan IDs disable all borrowing and show an integrity warning',()=>{
+ const {ui}=setup();
+ ui.state.keys[0].status='DATA_ERROR';
+ ui.state.dataIssues=['loan row 2'];
+ assert.equal(ui.canScan(),false);
+ assert.match(ui.borrowHtml(),/已暫停借還/);
+ assert.match(ui.statusHtml(),/資料待查核/);
+ assert.match(ui.returnHtml(),/已暫停借還/);
 });

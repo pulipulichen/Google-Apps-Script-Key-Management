@@ -32,16 +32,26 @@ function doGet() {
 /** 三入口使用的即時狀態，不對外傳送內部 RFID_UID。 */
 function getDashboard() {
   const db = sheets_();
-  const active = activeLoans_(db.loan);
-  const keys = keys_(db.key).map(k => ({
-    id: k.id,
-    name: k.name,
-    area: k.area,
-    location: k.location,
-    status: active[k.id] ? 'BORROWED' : 'AVAILABLE',
-    borrowedAt: active[k.id] ? active[k.id].borrowedAt : ''
-  }));
-  return {keys: keys, updatedAt: Utilities.formatDate(new Date(), SETTINGS.timezone, 'yyyy/MM/dd HH:mm:ss')};
+  const knownKeys = keys_(db.key);
+  const loans = activeLoans_(db.loan, knownKeys);
+  const keys = knownKeys.map(k => {
+    const openLoans = loans.byKey[k.id] || [];
+    return {
+      id: k.id,
+      name: k.name,
+      area: k.area,
+      location: k.location,
+      // 未知 key_id 可能是不同鑰匙：保守地暫停全部借還。
+      status: loans.issues.length ? 'DATA_ERROR' :
+        openLoans.length > 1 ? 'CONFLICT' : openLoans.length ? 'BORROWED' : 'AVAILABLE',
+      borrowedAt: openLoans.length ? openLoans[0].borrowedAt : ''
+    };
+  });
+  return {
+    keys: keys,
+    dataIssues: loans.issues,
+    updatedAt: Utilities.formatDate(new Date(), SETTINGS.timezone, 'yyyy/MM/dd HH:mm:ss')
+  };
 }
 
 /** 先驗證掃描的鑰匙與選擇項目相符。此步驟不改動資料。 */
@@ -58,7 +68,9 @@ function verifyBorrowTag(input) {
   if (scanned.id !== selected.id) {
     throw new Error('感應到「' + scanned.name + '」，但選擇的是「' + selected.name + '」。');
   }
-  if (activeLoans_(db.loan)[selected.id]) throw new Error('這把鑰匙已借出。');
+  const loans = activeLoans_(db.loan, keys);
+  assertLoanIntegrity_(loans);
+  if (loans.byKey[selected.id]) throw new Error('這把鑰匙已借出。');
   return {ok: true, name: selected.name};
 }
 
@@ -94,10 +106,13 @@ function borrowKey_(r, tx) {
 
   {
     const db = sheets_();
-    const key = keys_(db.key).find(k => k.id === keyId);
+    const knownKeys = keys_(db.key);
+    const key = knownKeys.find(k => k.id === keyId);
     if (!key) throw new Error('所選鑰匙不存在。');
     if (key.rfid !== scannedTag) throw new Error('鑰匙 RFID 與內部紀錄不符。');
-    if (activeLoans_(db.loan)[keyId]) throw new Error('鑰匙已被其他人借出，請重新整理。');
+    const loans = activeLoans_(db.loan, knownKeys);
+    assertLoanIntegrity_(loans);
+    if (loans.byKey[keyId]) throw new Error('鑰匙已被其他人借出，請重新整理。');
     // 寫入前再次查 member，避免前端驗證遭繞過，或驗證後名單被移除。
     if (identityType === 'RFID' && !findMemberByRfid_(db.book.getSheetByName('member'), personRfid)) {
       throw new Error(MEMBER_NOT_FOUND_MESSAGE);
@@ -108,10 +123,10 @@ function borrowKey_(r, tx) {
     const loanId = tx.id;
     tx.prepare({ok: true, name: key.name, area: key.area, location: key.location, logWarning: true});
     try {
-      db.loan.appendRow([
+      appendTypedRow_(db.loan, [
         loanId, keyId, new Date(), identityType === 'RFID' ? personRfid : '',
         signatureFileId, '', '', '', '', '', 'BORROWED', ''
-      ]);
+      ], [2, 4, 8]);
     } catch (err) {
       if (signatureFileId && !tx.started) {
         try { DriveApp.getFileById(signatureFileId).setTrashed(true); } catch (_) {}
@@ -138,10 +153,17 @@ function returnKey_(rawTag, tx) {
 
   {
     const db = sheets_();
-    const key = keys_(db.key).find(k => k.rfid === scannedTag);
+    const knownKeys = keys_(db.key);
+    const key = knownKeys.find(k => k.rfid === scannedTag);
     if (!key) throw new Error('找不到這個 RFID 對應的鑰匙。');
 
-    const loan = activeLoans_(db.loan)[key.id];
+    const loans = activeLoans_(db.loan, knownKeys);
+    assertLoanIntegrity_(loans);
+    const openLoans = loans.byKey[key.id] || [];
+    if (openLoans.length > 1) {
+      throw new Error('這把鑰匙有多筆未歸還的借用紀錄，請管理員先核對；尚未執行歸還。');
+    }
+    const loan = openLoans[0];
     if (!loan) {
       return {ok: true, alreadyReturned: true, name: key.name,
         area: key.area, location: key.location, logWarning: false};
@@ -150,6 +172,7 @@ function returnKey_(rawTag, tx) {
     tx.prepare({ok: true, alreadyReturned: false, name: key.name,
       area: key.area, location: key.location, logWarning: true});
     // 狀態與交易標記同次寫入；回應遺失仍可核對原交易，保留原 note。
+    db.loan.getRange(loan.row, 8).setNumberFormat('@');
     db.loan.getRange(loan.row, 7, 1, 6).setValues([
       [new Date(), scannedTag, '', '', 'RETURNED', note + '\n[return-request:' + tx.id + ']']
     ]);
@@ -307,23 +330,47 @@ function keys_(sheet) {
   return rows;
 }
 
-function activeLoans_(sheet) {
-  const result = Object.create(null);
+/**
+ * 比對完整 key.ID 字串。未知的 BORROWED key_id 不自動補零，避免配錯鑰匙。
+ * 同一鑰匙多筆 BORROWED 時保留證據並呈現 CONFLICT。
+ */
+function activeLoans_(sheet, knownKeys) {
+  const byKey = Object.create(null);
+  const issues = [];
+  const knownIds = new Set(knownKeys.map(k => k.id));
   const last = sheet.getLastRow();
-  if (last < 2) return result;
+  if (last < 2) return {byKey: byKey, issues: issues};
   const rows = sheet.getRange(2, 1, last - 1, 12).getDisplayValues();
   rows.forEach((row, index) => {
     if (str_(row[10]) !== 'BORROWED') return;
     const id = str_(row[1]);
-    if (!id) throw new Error('loan 第 ' + (index + 2) + ' 列缺少 key_id。');
-    if (result[id]) throw new Error('鑰匙 ' + id + ' 同時有多筆未歸還借出紀錄，請先修正。');
-    result[id] = {row: index + 2, loanId: str_(row[0]), borrowedAt: str_(row[2])};
+    if (!id || !knownIds.has(id)) {
+      issues.push('loan 第 ' + (index + 2) + ' 列 key_id「' + id + '」找不到對應鑰匙。');
+      return;
+    }
+    if (!byKey[id]) byKey[id] = [];
+    byKey[id].push({row: index + 2, loanId: str_(row[0]), borrowedAt: str_(row[2])});
   });
-  return result;
+  return {byKey: byKey, issues: issues};
+}
+
+function assertLoanIntegrity_(loans) {
+  if (loans.issues.length) {
+    throw new Error('借用資料有無法對應的 key_id，已暫停借還。請管理員核對：' + loans.issues.join('；'));
+  }
+}
+
+/** 先設純文字格式再寫值，避免 Google Sheets 將 '0001' 變為數字 1。 */
+function appendTypedRow_(sheet, values, textColumns) {
+  const nextRow = sheet.getLastRow() + 1;
+  if (nextRow > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+  textColumns.forEach(column => sheet.getRange(nextRow, column).setNumberFormat('@'));
+  sheet.getRange(nextRow, 1, 1, values.length).setValues([values]);
+  return nextRow;
 }
 
 function appendLog_(sheet, action, keyId, loanId, tag, fileId) {
-  sheet.appendRow([Utilities.getUuid(), new Date(), action, keyId, loanId, tag, fileId, '', 'SUCCESS', '']);
+  appendTypedRow_(sheet, [Utilities.getUuid(), new Date(), action, keyId, loanId, tag, fileId, '', 'SUCCESS', ''], [4, 6]);
 }
 
 function signatureBytes_(dataUrl) {

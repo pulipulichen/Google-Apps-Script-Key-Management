@@ -34,24 +34,72 @@ function getDashboard() {
   const db = sheets_();
   const knownKeys = keys_(db.key);
   const loans = activeLoans_(db.loan, knownKeys);
+  // 借用人姓名只回傳給授權登入者，簽名影像不放入清單。
+  const canView = canViewBorrowerDetails_();
+  const memberNames = canView ? memberNameMap_(db.book.getSheetByName('member')) : Object.create(null);
   const keys = knownKeys.map(k => {
     const openLoans = loans.byKey[k.id] || [];
+    const activeLoan = !loans.issues.length && openLoans.length === 1 ? openLoans[0] : null;
+    let borrowerName = '';
+    if (activeLoan) {
+      if (!canView) borrowerName = '借用人資訊需授權檢視';
+      else if (activeLoan.borrowRfid) borrowerName = memberNames[activeLoan.borrowRfid.toUpperCase()] || '查無對應成員';
+      else if (activeLoan.signatureFileId) borrowerName = '手寫簽名';
+      else borrowerName = '借用身分資料缺漏';
+    }
     return {
-      id: k.id,
-      name: k.name,
-      area: k.area,
-      location: k.location,
-      // 未知 key_id 可能是不同鑰匙：保守地暫停全部借還。
+      id: k.id, name: k.name, area: k.area, location: k.location,
+      // 不明 key_id 可能是不同鑰匙，不能自動配對或繼續借還。
       status: loans.issues.length ? 'DATA_ERROR' :
         openLoans.length > 1 ? 'CONFLICT' : openLoans.length ? 'BORROWED' : 'AVAILABLE',
-      borrowedAt: openLoans.length ? openLoans[0].borrowedAt : ''
+      borrowedAt: activeLoan ? activeLoan.borrowedAt : '',
+      borrowerName: borrowerName,
+      loanId: activeLoan && canView ? activeLoan.loanId : '',
+      hasSignature: !!(activeLoan && canView && activeLoan.signatureFileId)
     };
   });
   return {
-    keys: keys,
-    dataIssues: loans.issues,
+    keys: keys, dataIssues: loans.issues,
     updatedAt: Utilities.formatDate(new Date(), SETTINGS.timezone, 'yyyy/MM/dd HH:mm:ss')
   };
+}
+
+/**
+ * 每次驗證目前有效借出的 loanId、keyId，再按需傳回 PNG。
+ * 不接受任意 Drive fileId，不產生公開 URL，也不更改分享權限。
+ */
+function getActiveBorrowSignature(input) {
+  if (!canViewBorrowerDetails_()) {
+    throw new Error('沒有查看借用人簽名的權限，請使用已授權的 Google 帳號登入。');
+  }
+  const keyId = str_(input && input.keyId);
+  const loanId = str_(input && input.loanId);
+  if (!keyId || !loanId) throw new Error('缺少鑰匙或借出紀錄識別資訊，請重新整理。');
+  const db = sheets_();
+  const knownKeys = keys_(db.key);
+  if (!knownKeys.some(k => k.id === keyId)) throw new Error('找不到指定鑰匙。');
+  const loans = activeLoans_(db.loan, knownKeys);
+  if (loans.issues.length) throw new Error('借用資料異常，請先核對資料。');
+  const current = loans.byKey[keyId] || [];
+  if (current.length !== 1 || current[0].loanId !== loanId) {
+    throw new Error('借用狀態已改變或紀錄不唯一，請重新整理鑰匙狀況。');
+  }
+  const fileId = current[0].signatureFileId;
+  if (!fileId) throw new Error('目前這筆借用沒有手寫簽名。');
+  try {
+    const blob = DriveApp.getFileById(fileId).getBlob();
+    const bytes = blob.getBytes();
+    if (blob.getContentType() !== 'image/png' || !bytes.length ||
+        bytes.length > SETTINGS.maxSignatureBytes ||
+        bytes.slice(0, 8).map(n => n & 255).join(',') !== '137,80,78,71,13,10,26,10') {
+      throw new Error('不是有效的 PNG');
+    }
+    return {ok: true, keyId: keyId, loanId: loanId,
+      dataUrl: 'data:image/png;base64,' + Utilities.base64Encode(bytes)};
+  } catch (error) {
+    console.error('借用簽名讀取失敗：' + error);
+    throw new Error('簽名無法取得，請管理員確認 Google Drive 檔案與權限。');
+  }
 }
 
 /** 先驗證掃描的鑰匙與選擇項目相符。此步驟不改動資料。 */
@@ -296,6 +344,46 @@ function checkHeader_(sheet, expected) {
 }
 
 /**
+ * 借用人與簽名屬個資：需同時設定 Web App 部署存取範圍、
+ * Script Properties 的 BORROWER_VIEWER_EMAILS 或 BORROWER_VIEWER_DOMAINS。
+ * 無法取得瀏覽者電子郵件時拒絕查閱，不能拿 EffectiveUser 代替。
+ */
+function canViewBorrowerDetails_() {
+  try {
+    if (typeof Session === 'undefined' || typeof PropertiesService === 'undefined') return false;
+    const email = str_(Session.getActiveUser().getEmail()).toLowerCase();
+    if (!email || !email.includes('@')) return false;
+    const props = PropertiesService.getScriptProperties();
+    const allowed = key => str_(props.getProperty(key)).toLowerCase()
+      .split(/[,;\s]+/).filter(Boolean);
+    const emails = allowed('BORROWER_VIEWER_EMAILS');
+    const domains = allowed('BORROWER_VIEWER_DOMAINS').map(d => d.replace(/^@/, ''));
+    return emails.includes(email) || domains.includes(email.split('@').pop());
+  } catch (error) {
+    console.warn('借用人檢視權限確認失敗：' + error);
+    return false;
+  }
+}
+
+/** 只讀一次 member A:B；未知 RFID 不推測對應的姓名。 */
+function memberNameMap_(sheet) {
+  const names = Object.create(null);
+  if (!sheet) return names;
+  try {
+    checkHeader_(sheet, ['id', 'member_name']);
+    const last = sheet.getLastRow();
+    if (last < 2) return names;
+    sheet.getRange(2, 1, last - 1, 2).getDisplayValues().forEach(row => {
+      const id = str_(row[0]).toUpperCase();
+      if (id && !Object.prototype.hasOwnProperty.call(names, id)) names[id] = str_(row[1]);
+    });
+  } catch (error) {
+    console.warn('member 名稱查詢失敗：' + error);
+  }
+  return names;
+}
+
+/**
  * 使用 member!A:B 登錄名單，id 比對不分英文字母大小寫，保留前導零。
  * 沒有 member 工作表或欄位不符時一律拒絕 RFID 借用。
  */
@@ -349,7 +437,8 @@ function activeLoans_(sheet, knownKeys) {
       return;
     }
     if (!byKey[id]) byKey[id] = [];
-    byKey[id].push({row: index + 2, loanId: str_(row[0]), borrowedAt: str_(row[2])});
+    byKey[id].push({row: index + 2, loanId: str_(row[0]), borrowedAt: str_(row[2]),
+      borrowRfid: str_(row[3]), signatureFileId: str_(row[4])});
   });
   return {byKey: byKey, issues: issues};
 }

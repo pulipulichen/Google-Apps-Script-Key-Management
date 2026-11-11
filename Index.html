@@ -62,7 +62,11 @@
     .stat{padding:16px;background:white;border:1px solid #e2e8f0;border-radius:11px}
     .stat strong{display:block;font-size:28px;margin-top:3px}
     .detail{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #e2e8f0}
-    .detail span{color:#64748b}.detail strong{text-align:right}
+    .detail span{color:#64748b}.detail strong{text-align:right;overflow-wrap:anywhere}
+    .signature-backdrop{position:fixed;inset:0;z-index:9000;background:#0f172ac9;display:flex;align-items:center;justify-content:center;padding:20px}
+    .signature-dialog{background:white;border-radius:14px;padding:20px;max-width:min(740px,100%);width:100%;max-height:90vh;overflow:auto;box-shadow:0 16px 60px #0005}
+    .signature-dialog img{display:block;width:100%;height:auto;border:1px solid #e2e8f0;border-radius:8px;margin-top:14px}
+    .signature-dialog .row{justify-content:space-between;margin-top:0}
     .empty{text-align:center;color:#64748b;font-size:13px;padding:25px}
     .busy{position:fixed;bottom:14px;right:14px;background:#0f172a;color:white;border-radius:9px;padding:12px 15px;font-size:13px;box-shadow:0 8px 30px #0f172a35}
     .busy{inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;border-radius:0;background:#0f172ab8;text-align:center;backdrop-filter:blur(2px)}
@@ -91,7 +95,7 @@
 const main=document.getElementById('main'),busy=document.getElementById('busy');
 const state={page:'borrow',keys:[],loading:true,working:false,selected:'',
   query:'',area:'全部',method:'SIGNATURE',signature:'',signed:false,person:'',memberVerifiedRfid:'',pending:'',
-  borrowMessage:null,returnMessage:null,returnResult:null,returnTag:'',statusQuery:'',statusFilter:'ALL',detail:'',dataIssues:[]};
+  borrowMessage:null,returnMessage:null,returnResult:null,returnTag:'',statusQuery:'',statusFilter:'ALL',detail:'',dataIssues:[],statusMessage:null,signaturePreview:null,signatureLoading:false};
 let scanTimer=null,personTimer=null,sequence=0,personSequence=0;
 let transaction=null,checking=false;
 const transactionStorageKey='key-management-pending-v1';
@@ -133,13 +137,14 @@ function call(name,...args){return new Promise((resolve,reject)=>{
   catch(e){clearTimeout(timer);reject(e);}
 });}
 async function refresh(){
-  try{setWorking(true);const r=await call('getDashboard');state.keys=r.keys||[];state.dataIssues=r.dataIssues||[];state.loading=false;render();}
+  try{setWorking(true);const r=await call('getDashboard');state.keys=r.keys||[];state.dataIssues=r.dataIssues||[];state.loading=false;state.signaturePreview=null;state.statusMessage=null;render();}
   catch(e){state.loading=false;errorMessage(e.message);}
   finally{setWorking(false);}
 }
 function errorMessage(text){
  if(state.page==='borrow')state.borrowMessage={type:'error',text:text};
- else state.returnMessage={type:'error',text:text};
+ else if(state.page==='return')state.returnMessage={type:'error',text:text};
+  else state.statusMessage={type:'error',text:text};
  render();
 }
 function render(){
@@ -160,7 +165,7 @@ function keyRows(mode){
    (mode!=='borrow'||state.area==='全部'||state.area===k.area)&&
    (mode!=='status'||state.statusFilter==='ALL'||k.status===state.statusFilter||
      (state.statusFilter==='CONFLICT'&&k.status==='DATA_ERROR'))&&
-   (k.name.toLowerCase().includes(search)||(k.area||'').toLowerCase().includes(search)));
+   (k.name.toLowerCase().includes(search)||(k.area||'').toLowerCase().includes(search)||(mode==='status'&&k.status==='BORROWED'&&(k.borrowerName||'').toLowerCase().includes(search))));
  if(!arr.length)return '<div class="empty">沒有符合條件的鑰匙</div>';
  return arr.map(k=>'<button type="button" class="key '+((mode==='borrow'?state.selected:state.detail)===k.id?'selected':'')+'" data-key="'+esc(k.id)+'" data-mode="'+mode+'"><span style="font-size:22px">🔑</span><span style="flex:1;min-width:0"><div class="keyname">'+esc(k.name)+'</div><div class="keyarea">'+esc(k.area||'未分類')+'</div></span>'+pill(k)+'</button>').join('');
 }
@@ -208,24 +213,47 @@ function returnHtml(){
  state.returnMessage?'<div style="max-width:740px;margin:15px auto">'+alertBox(state.returnMessage)+(state.returnTag?'<button type="button" class="btn" data-retry-return>重試歸還</button>':'')+'</div>':'');
 }
 function statusHtml(){
- const count=state.keys.filter(k=>k.status==='BORROWED').length;
- const anomalies=state.keys.filter(k=>['CONFLICT','DATA_ERROR'].includes(k.status)).length;
- const k=keyById(state.detail);
- return '<h2>鑰匙狀況</h2><p class="intro">查看目前可借用及已借出的鑰匙。資料來自 Google Sheet。</p>'+
- integrityWarning()+'<div class="stats"><div class="stat">鑰匙總數<strong>'+state.keys.length+'</strong></div>'+
- '<div class="stat">可借用<strong style="color:#059669">'+available().length+'</strong></div>'+
- '<div class="stat">已借出<strong style="color:#b45309">'+count+'</strong></div>'+
- (anomalies?'<div class="stat">資料異常<strong style="color:#b91c1c">'+anomalies+'</strong></div>':'')+'</div>'+
- '<button type="button" class="btn" data-refresh style="margin-bottom:14px">↻ 重新整理資料</button>'+
- '<div class="columns"><section class="card"><div class="title">鑰匙清單</div>'+
- '<input id="status-search" class="input" placeholder="🔍 搜尋名稱或區域" value="'+esc(state.statusQuery)+'">'+
- '<div class="filters">'+[['ALL','全部'],['AVAILABLE','可借用'],['BORROWED','已借出'],['CONFLICT','資料異常']].map(([v,t])=>'<button type="button" class="filter '+(state.statusFilter===v?'selected':'')+'" data-filter="'+v+'">'+t+'</button>').join('')+'</div>'+
- '<div class="keylist" id="status-keys">'+keyRows('status')+'</div></section>'+
- '<section class="card"><div class="title">鑰匙詳細資訊</div>'+
- (k?'<h2 style="font-size:19px">'+esc(k.name)+'</h2><div style="margin-top:10px">'+pill(k)+'</div>'+
- [['區域',k.area||'未分類'],...(String(k.location??'').trim()?[['存放位置',String(k.location).trim()]]:[]),['最近借出時間',k.borrowedAt||'—']].map(([a,b])=>'<div class="detail"><span>'+a+'</span><strong>'+esc(b)+'</strong></div>').join(''):
- '<div class="empty">選擇左側鑰匙，即可查看詳細資料。</div>')+
- '</section></div>';
+  const count=state.keys.filter(k=>k.status==='BORROWED').length;
+  const anomalies=state.keys.filter(k=>['CONFLICT','DATA_ERROR'].includes(k.status)).length;
+  const k=keyById(state.detail);
+  const borrower=k&&k.status==='BORROWED'
+    ? '<div class="detail"><span>目前借用人</span><strong>'+esc(k.borrowerName||'查無有效借用紀錄')+'</strong></div>'+
+      (k.hasSignature?'<div class="row"><button type="button" class="btn" data-view-signature="'+esc(k.id)+'" '+(state.signatureLoading?'disabled':'')+'>'+(state.signatureLoading?'簽名讀取中……':'查看簽名')+'</button></div>':'')
+    : k&&['CONFLICT','DATA_ERROR'].includes(k.status)
+      ? '<div class="alert error" role="alert" style="margin-top:12px">借用紀錄異常，無法確定目前借用人。請先核對 loan 資料。</div>':'';
+  const preview=state.signaturePreview
+    ? '<div class="signature-backdrop"><div class="signature-dialog" role="dialog" aria-modal="true" aria-label="借用簽名預覽"><div class="row"><strong>目前借用人的手寫簽名</strong><button type="button" class="btn" data-close-signature>關閉</button></div><img alt="目前借用人的手寫簽名" src="'+esc(state.signaturePreview.dataUrl)+'"></div></div>'
+    : '';
+  return '<h2>鑰匙狀況</h2><p class="intro">查看目前可借用及已借出的鑰匙。資料來自 Google Sheet。</p>'+
+  integrityWarning()+alertBox(state.statusMessage)+
+  '<div class="stats"><div class="stat">鑰匙總數<strong>'+state.keys.length+'</strong></div>'+
+  '<div class="stat">可借用<strong style="color:#059669">'+available().length+'</strong></div>'+
+  '<div class="stat">已借出<strong style="color:#b45309">'+count+'</strong></div>'+
+  (anomalies?'<div class="stat">資料異常<strong style="color:#b91c1c">'+anomalies+'</strong></div>':'')+'</div>'+
+  '<button type="button" class="btn" data-refresh style="margin-bottom:14px">↻ 重新整理資料</button>'+
+  '<div class="columns"><section class="card"><div class="title">鑰匙清單</div>'+
+  '<input id="status-search" class="input" placeholder="🔍 搜尋鑰匙名稱、區域或借用人" value="'+esc(state.statusQuery)+'">'+
+  '<div class="filters">'+[['ALL','全部'],['AVAILABLE','可借用'],['BORROWED','已借出'],['CONFLICT','資料異常']].map(([v,t])=>'<button type="button" class="filter '+(state.statusFilter===v?'selected':'')+'" data-filter="'+v+'">'+t+'</button>').join('')+'</div>'+
+  '<div class="keylist" id="status-keys">'+keyRows('status')+'</div></section>'+
+  '<section class="card"><div class="title">鑰匙詳細資訊</div>'+
+  (k?'<h2 style="font-size:19px">'+esc(k.name)+'</h2><div style="margin-top:10px">'+pill(k)+'</div>'+
+  [['區域',k.area||'未分類'],...(String(k.location??'').trim()?[['存放位置',String(k.location).trim()]]:[]),['最近借出時間',k.borrowedAt||'—']].map(([a,b])=>'<div class="detail"><span>'+a+'</span><strong>'+esc(b)+'</strong></div>').join('')+borrower:
+  '<div class="empty">選擇左側鑰匙，即可查看詳細資料。</div>')+
+  '</section></div>'+preview;
+}
+async function openSignature(keyId){
+  const k=keyById(keyId);
+  if(blocked()||state.signatureLoading||state.page!=='status'||!k||
+      k.status!=='BORROWED'||!k.hasSignature||!k.loanId)return;
+  state.signatureLoading=true;state.signaturePreview=null;state.statusMessage=null;render();
+  try{
+    const result=await call('getActiveBorrowSignature',{keyId:keyId,loanId:k.loanId});
+    if(state.page==='status'&&state.detail===keyId&&keyById(keyId)?.loanId===k.loanId&&result.ok&&result.dataUrl)
+      state.signaturePreview={keyId:keyId,dataUrl:result.dataUrl};
+  }catch(error){
+    if(state.page==='status'&&state.detail===keyId)
+      state.statusMessage={type:'error',text:error.message||'簽名無法取得。'};
+  }finally{state.signatureLoading=false;if(state.page==='status')render();}
 }
 function canScan(){return !!state.selected&&keyById(state.selected)?.status==='AVAILABLE'&&ready();}
 function ready(){
@@ -364,9 +392,11 @@ document.getElementById('check-transaction').addEventListener('click',checkTrans
 window.addEventListener('beforeunload',ev=>{if(transaction){ev.preventDefault();ev.returnValue='';}});
 document.addEventListener('click',ev=>{
  const b=ev.target.closest('button');if(!b)return;
- if(b.dataset.tab){if(blocked())return;state.page=b.dataset.tab;state.returnMessage=null;render();if(state.page==='status')refresh();return;}
+ if(b.dataset.tab){if(blocked())return;state.page=b.dataset.tab;state.returnMessage=null;state.statusMessage=null;state.signaturePreview=null;render();if(state.page==='status')refresh();return;}
  if(blocked())return;
- if(b.dataset.key){if(b.dataset.mode==='borrow'){state.selected=b.dataset.key;state.pending='';state.borrowMessage=null;}else state.detail=b.dataset.key;render();return;}
+ if(b.hasAttribute('data-close-signature')){state.signaturePreview=null;render();return;}
+ if(b.dataset.viewSignature){openSignature(b.dataset.viewSignature);return;}
+ if(b.dataset.key){if(b.dataset.mode==='borrow'){state.selected=b.dataset.key;state.pending='';state.borrowMessage=null;}else {state.detail=b.dataset.key;state.signaturePreview=null;state.statusMessage=null;}render();return;}
  if(b.hasAttribute('data-area')){state.area=b.dataset.area;render();return;}
  if(b.hasAttribute('data-retry-return')){scan('return',state.returnTag);return;}
  if(b.hasAttribute('data-retry-borrow')){submitBorrow();return;}
@@ -398,6 +428,7 @@ document.addEventListener('input',ev=>{
  if(el.value.trim())scanTimer=setTimeout(()=>scan(kind,el.value),750);
 });
 document.addEventListener('keydown',ev=>{
+ if(ev.key==='Escape'&&state.signaturePreview&&!blocked()){state.signaturePreview=null;render();return;}
  if(ev.key!=='Enter')return;
  ev.preventDefault();
  if(['borrow-scan','return-scan'].includes(ev.target.id)){

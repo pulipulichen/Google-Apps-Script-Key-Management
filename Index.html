@@ -85,9 +85,9 @@
 'use strict';
 const main=document.getElementById('main'),busy=document.getElementById('busy');
 const state={page:'borrow',keys:[],loading:true,working:false,selected:'',
-  query:'',area:'全部',method:'SIGNATURE',signature:'',signed:false,person:'',pending:'',
+  query:'',area:'全部',method:'SIGNATURE',signature:'',signed:false,person:'',memberVerifiedRfid:'',pending:'',
   borrowMessage:null,returnMessage:null,returnResult:null,statusQuery:'',statusFilter:'ALL',detail:''};
-let scanTimer=null,personTimer=null,sequence=0;
+let scanTimer=null,personTimer=null,sequence=0,personSequence=0;
 const esc=x=>String(x===null||x===undefined?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const keyById=id=>state.keys.find(k=>k.id===id);
 const available=()=>state.keys.filter(k=>k.status==='AVAILABLE');
@@ -142,7 +142,7 @@ function identityHtml(){
  (state.method==='SIGNATURE'?
   '<div class="signature"><canvas id="signature" width="800" height="280" aria-label="手寫簽名區"></canvas>'+(state.signed?'':'<span class="signhint">請在此手寫簽名</span>')+'</div>'+
   '<div class="row" style="justify-content:space-between"><span class="muted">'+(state.signed?'✓ 已簽名':'可使用滑鼠、觸控筆或手指')+'</span><button type="button" class="btn" data-clear>清除重簽</button></div>'
-  :'<label for="person" class="muted" style="display:block;margin:10px 0 7px">點選此處，感應借用人的 RFID 卡</label><input class="input" id="person" value="'+esc(state.person)+'" placeholder="人員 RFID 編號">');
+  :'<label for="person" class="muted" style="display:block;margin:10px 0 7px">點選此處，感應借用人的 RFID 卡</label><input class="input" id="person" value="'+esc(state.person)+'" placeholder="人員 RFID 編號" autocomplete="off" spellcheck="false">');
 }
 function checks(){
  return '<div class="checklist"><span class="'+(state.selected?'ok':'')+'">'+(state.selected?'✓':'○')+' 已選鑰匙</span>'+
@@ -187,7 +187,37 @@ function statusHtml(){
  '<div class="empty">選擇左側鑰匙，即可查看詳細資料。</div>')+
  '</section></div>';
 }
-function ready(){return state.method==='SIGNATURE'?state.signed:!!state.person.trim();}
+function ready(){
+  return state.method==='SIGNATURE'
+    ? state.signed
+    : !!state.person.trim()&&state.memberVerifiedRfid===state.person.trim();
+}
+function fallbackToSignature(message){
+  clearTimeout(personTimer);
+  ++personSequence;
+  state.method='SIGNATURE';
+  state.person='';
+  state.memberVerifiedRfid='';
+  state.signature='';
+  state.signed=false;
+  state.borrowMessage={type:'error',text:message||'人員 RFID 未登錄於 member 名單，請改用手寫簽名。'};
+}
+async function verifyPerson(){
+  const tag=state.person.trim();
+  if(state.method!=='RFID'||!tag||state.working)return;
+  const seq=++personSequence;
+  setWorking(true);
+  try{
+    const result=await call('verifyMemberRfid',tag);
+    if(seq!==personSequence||state.method!=='RFID'||state.person.trim()!==tag)return;
+    if(!result.ok){fallbackToSignature(result.message);return;}
+    state.memberVerifiedRfid=tag;
+    state.borrowMessage={type:'info',text:'✓ 人員 RFID 已通過 member 名單驗證。'+(state.pending?'正在完成借出……':'')};
+    if(state.pending)await submitBorrow(true);
+  }catch(e){
+    if(seq===personSequence)state.borrowMessage={type:'error',text:e.message};
+  }finally{setWorking(false);render();}
+}
 function drawList(mode){const box=document.getElementById(mode==='borrow'?'keylist':'status-keys');if(box)box.innerHTML=keyRows(mode);}
 function attachSignature(){
  const c=document.getElementById('signature');if(!c)return;
@@ -242,9 +272,12 @@ async function submitBorrow(alreadyWorking){
  try{
    const result=await call('borrowKey',payload);
    state.borrowMessage={type:result.logWarning?'info':'success',text:'✓ '+result.name+' 已成功借出。'+(result.logWarning?'但 log 寫入異常，請通知管理員。':'')};
-   state.selected='';state.pending='';state.signature='';state.signed=false;state.person='';
+   state.selected='';state.pending='';state.signature='';state.signed=false;state.person='';state.memberVerifiedRfid='';
    state.keys=(await call('getDashboard')).keys||[];
- }catch(e){state.borrowMessage={type:'error',text:e.message};state.pending='';}
+  }catch(e){
+    if(state.method==='RFID'&&e.message.includes('人員 RFID 未登錄於 member 名單'))fallbackToSignature(e.message);
+    else {state.borrowMessage={type:'error',text:e.message};state.pending='';}
+  }
  finally{setWorking(false);render();}
 }
 document.addEventListener('click',ev=>{
@@ -253,7 +286,12 @@ document.addEventListener('click',ev=>{
  if(state.working)return;
  if(b.dataset.key){if(b.dataset.mode==='borrow'){state.selected=b.dataset.key;state.pending='';state.borrowMessage=null;}else state.detail=b.dataset.key;render();return;}
  if(b.hasAttribute('data-area')){state.area=b.dataset.area;render();return;}
- if(b.dataset.method){state.method=b.dataset.method;render();if(state.pending&&ready())submitBorrow();return;}
+ if(b.dataset.method){
+    clearTimeout(personTimer);++personSequence;
+    state.method=b.dataset.method;
+    if(state.method==='RFID'){state.person='';state.memberVerifiedRfid='';}
+    render();if(state.pending&&ready())submitBorrow();return;
+  }
  if(b.hasAttribute('data-clear')){state.signature='';state.signed=false;render();return;}
  if(b.dataset.filter){state.statusFilter=b.dataset.filter;render();return;}
  if(b.hasAttribute('data-refresh')){refresh();return;}
@@ -262,7 +300,12 @@ document.addEventListener('input',ev=>{
  const el=ev.target;
  if(el.id==='borrow-search'){state.query=el.value;drawList('borrow');return;}
  if(el.id==='status-search'){state.statusQuery=el.value;drawList('status');return;}
- if(el.id==='person'){state.person=el.value;clearTimeout(personTimer);if(state.pending&&ready())personTimer=setTimeout(()=>submitBorrow(),650);return;}
+ if(el.id==='person'){
+    state.person=el.value;state.memberVerifiedRfid='';++personSequence;
+    clearTimeout(personTimer);
+    if(state.person.trim())personTimer=setTimeout(verifyPerson,750);
+    return;
+  }
  if(!['borrow-scan','return-scan'].includes(el.id))return;
  clearTimeout(scanTimer);const kind=el.id==='borrow-scan'?'borrow':'return';
  if(el.value.trim())scanTimer=setTimeout(()=>scan(kind,el.value),750);
@@ -271,7 +314,7 @@ document.addEventListener('keydown',ev=>{
  if(ev.key!=='Enter')return;
  if(['borrow-scan','return-scan'].includes(ev.target.id)){
    ev.preventDefault();clearTimeout(scanTimer);scan(ev.target.id==='borrow-scan'?'borrow':'return',ev.target.value);
- }else if(ev.target.id==='person'&&state.pending){ev.preventDefault();clearTimeout(personTimer);submitBorrow();}
+ }else if(ev.target.id==='person'){ev.preventDefault();clearTimeout(personTimer);verifyPerson();}
 });
 document.addEventListener('focusin',ev=>{if(ev.target.classList.contains('scaninput'))setFocus(ev.target,true);});
 document.addEventListener('focusout',ev=>{if(ev.target.classList.contains('scaninput'))setFocus(ev.target,false);});

@@ -62,6 +62,20 @@ clasp open
 - 上線前建議用測試鑰匙執行一次借出、查詢、歸還，核對 loan、log、簽名檔。
 - 本次只提交 GitHub 原始碼，**尚未建立可直接使用的 Apps Script Web App 部署網址**。
 
+
+## 2026-11-11：借出後仍顯示可借用（Issue #4）
+
+原因：Google Sheets 曾將 `loan.key_id` 和 `log.key_id` 的 `0001` 自動轉成數字 `1`。鑰匙主檔仍是 `0001`，所以精確字串比對失敗，導致已借出誤判成可借用。
+
+- 後端新增 `appendTypedRow_`：寫入借用紀錄和稽核日誌前，先將 ID/RFID 儲存格設成純文字。歸還 RFID 也依相同方式保留前導零。
+- `getDashboard` 遇到同一把鑰匙多筆未歸還紀錄，顯示 `CONFLICT`（借用紀錄異常），不得重新借出；其歸還操作也會拒絕，以免不明確地結案其中一筆。
+- 若發現 `BORROWED` 借用資料中的 `key_id` 無法精確對應 `key.ID`，則所有鑰匙暫時標成 `DATA_ERROR`（資料待查核），並暫停借還；**不自行去掉或補上前導零**。
+- 舊資料已在備份後將兩筆 `loan.key_id` 與對應 `log.key_id`、`log.rfid_uid` 修成文字型 `0001`。但會議室鑰匙現在有 **兩筆原始未歸還紀錄（2026-11-11 23:04:53、23:13:32）**，各有簽名，為保留真實稽核證據，**未自行關閉／刪除任一筆**。
+- 管理員需對照實際借用情況，判定哪筆是有效借用、哪筆屬於重複操作，再以可稽核方式修正狀態。**不可將未實際歸還的紀錄假寫為 `RETURNED`**。
+- 變更 GitHub `main` 不會自動更新既有 Apps Script 網頁部署。請同步 `Code.gs` 和 `Index.html`，再在 Apps Script「部署 → 管理部署作業」更新網頁應用程式版本，否則使用者仍會看到舊程式。
+
+修正後的本機回歸測試命令仍為 `node --test tests/*.test.cjs`。測試涵蓋前導零、未知鑰匙、兩筆未歸還紀錄、借還重試與前端狀態顯示。
+
 ## 修改執行設定
 
 如需調整資料來源或簽名位置，修改 **Code.gs** 裡的 SETTINGS 常數：spreadsheetId、signatureParentFolderId、signatureFolderName、timezone。**schema.yaml 不參與執行。**

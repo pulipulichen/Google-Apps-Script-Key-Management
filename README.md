@@ -15,9 +15,13 @@
 - **appsscript.json**：Apps Script V8 設定。
 - **schema.yaml**：**人工參考文件**，描述 Google Sheets 表與欄位；Apps Script **不會讀取**，修改它也不會自動修改資料表或程式。
 
-## 現有 Google Sheets
+## 公開資料庫 Demo（Google Sheets）
 
-[鑰匙管理資料庫](https://docs.google.com/spreadsheets/d/1vXwer7b9briUVHCn-wx-iyb6X-m62PNwQMnFPX7JItw/edit)
+📖 **[查看公開 Google Sheets Demo：鑰匙管理資料庫 - 2026](https://docs.google.com/spreadsheets/d/1vXwer7b9briUVHCn-wx-iyb6X-m62PNwQMnFPX7JItw/edit?usp=sharing)**
+
+這份試算表已開放「知道連結的任何人都可以檢視」，提供資料表分頁、欄位結構與資料格式的參考。下列為主要工作表：
+
+> **使用前請先建立自己的試算表副本**，並在 `Code.gs` 的 `SETTINGS.spreadsheetId` 填入副本 ID。正式環境的鑰匙借還紀錄、人員 RFID、姓名與簽名檔不應寫入公開 Demo；Web App 仍須自行部署並設定存取權限。
 
 - **key**：ID、名稱、區域、存放位置。ID 預設是鑰匙 RFID（例如 0001）；如果實際掃描 UID 不同，才另外新增 **RFID_UID** 欄位。
 - **member**：人員 RFID 白名單，使用 `id` 比對卡號、`member_name` 記錄姓名。選擇人員 RFID 時會先驗證；不在名單內則顯示錯誤、自動切回手寫簽名，並且在借出寫入前由後端再次驗證。
@@ -114,3 +118,7 @@ clasp open
 **仍必須另外把 Web App 的部署存取對象限制在授權機構人員**。指令碼屬性白名單是個資的額外伺服端保護，不能取代部署存取限制；請勿將程式改成公開的「任何人」可存取。新增屬性後重新整理前台即可檢視；修改原始碼後則需同步 `Code.gs`、`Index.html` 並更新 Web App 部署版本。
 
 本功能不新增或改動 Google Sheets 欄位。
+
+## 授權
+
+本專案原始碼採用 [MIT License](LICENSE) 授權。公開的 Google Sheets Demo 僅供參考資料表結構，請勿在其中填入正式環境的個人資料。

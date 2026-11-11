@@ -1,6 +1,6 @@
 # 鑰匙管理平台資料結構（人工參考用，Apps Script 不讀取此檔案）
 # 版本：1
-# 同一份 Google 試算表包含三張工作表，不是 SQL 資料庫。
+# 同一份 Google 試算表包含四張工作表，不是 SQL 資料庫。
 # 程式中的工作表名稱與欄位順序目前寫在 Code.gs，修改此 YAML 不會自動變更程式。
 version: 1
 spreadsheet:
@@ -32,6 +32,19 @@ sheets:
       - {ID: "0001", 名稱: "會議室鑰匙", 區域: "行政區", 存放位置: ""}
       - {ID: "0002", 名稱: "實驗室鑰匙", 區域: "教學區", 存放位置: ""}
       - {ID: "0003", 名稱: "倉庫鑰匙", 區域: "運動區", 存放位置: ""}
+
+  member:
+    title: "member"
+    purpose: "人員 RFID 白名單；僅允許 id 已登錄的卡號用於借用人識別"
+    header_row: 1
+    primary_key: "id"
+    columns:
+      - {name: "id", type: string, required: true, unique: true, notes: "人員 RFID 卡號，儲存成純文字並保留前導零；比對時英文字母不分大小寫"}
+      - {name: "member_name", type: string, required: false, notes: "人員姓名，供辨識用；不影響卡號是否有效"}
+    validation:
+      - "選擇人員 RFID 後必須先與 member.id 比對"
+      - "未登錄時顯示錯誤，切回手寫簽名，清除無效卡號，不得建立借用紀錄"
+      - "借出寫入 loan 前仍須在後端再次驗證 member.id"
 
   loan:
     title: "loan"

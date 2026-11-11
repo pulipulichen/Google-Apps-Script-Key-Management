@@ -11,6 +11,8 @@ const SETTINGS = Object.freeze({
   maxSignatureBytes: 2 * 1024 * 1024
 });
 
+const MEMBER_NOT_FOUND_MESSAGE = '人員 RFID 未登錄於 member 名單，請改用手寫簽名。';
+
 const LOAN_HEADERS = [
   'loan_id','key_id','borrowed_at','borrow_rfid_uid',
   'borrow_signature_file_id','borrow_operator','returned_at',
@@ -60,6 +62,17 @@ function verifyBorrowTag(input) {
   return {ok: true, name: selected.name};
 }
 
+/** 只接受 member.id 中已登錄的人員 RFID；不回傳完整人員清單。 */
+function verifyMemberRfid(rawRfid) {
+  const rfid = str_(rawRfid);
+  if (!rfid) throw new Error('請先感應人員 RFID。');
+  const sheet = SpreadsheetApp.openById(SETTINGS.spreadsheetId).getSheetByName('member');
+  const member = findMemberByRfid_(sheet, rfid);
+  return member
+    ? {ok: true}
+    : {ok: false, message: MEMBER_NOT_FOUND_MESSAGE};
+}
+
 /**
  * 借鑰匙：簽名（預設）或人員 RFID 二擇一，鑰匙本身 RFID 必填。
  * LockService 內再次檢查，以防多人同時借出。
@@ -81,6 +94,10 @@ function borrowKey(input) {
     if (!key) throw new Error('所選鑰匙不存在。');
     if (key.rfid !== scannedTag) throw new Error('鑰匙 RFID 與內部紀錄不符。');
     if (activeLoans_(db.loan)[keyId]) throw new Error('鑰匙已被其他人借出，請重新整理。');
+    // 寫入前再次查 member，避免前端驗證遭繞過，或驗證後名單被移除。
+    if (identityType === 'RFID' && !findMemberByRfid_(db.book.getSheetByName('member'), personRfid)) {
+      throw new Error(MEMBER_NOT_FOUND_MESSAGE);
+    }
 
     let signatureFileId = '';
     if (identityType === 'SIGNATURE') signatureFileId = storeSignature_(r.signatureDataUrl, keyId);
@@ -143,7 +160,7 @@ function sheets_() {
   }
   checkHeader_(loan, LOAN_HEADERS);
   checkHeader_(log, LOG_HEADERS);
-  return {key: key, loan: loan, log: log};
+  return {book: book, key: key, loan: loan, log: log};
 }
 
 function checkHeader_(sheet, expected) {
@@ -151,6 +168,22 @@ function checkHeader_(sheet, expected) {
   if (expected.some((name, i) => name !== actual[i])) {
     throw new Error(sheet.getName() + ' 表的標題列與程式不符，請檢查。');
   }
+}
+
+/**
+ * 使用 member!A:B 登錄名單，id 比對不分英文字母大小寫，保留前導零。
+ * 沒有 member 工作表或欄位不符時一律拒絕 RFID 借用。
+ */
+function findMemberByRfid_(sheet, rfid) {
+  if (!sheet) throw new Error('找不到 member 工作表，請通知管理員。');
+  checkHeader_(sheet, ['id', 'member_name']);
+  const last = sheet.getLastRow();
+  if (last < 2) return null;
+  const target = str_(rfid).toUpperCase();
+  if (!target) return null;
+  const rows = sheet.getRange(2, 1, last - 1, 2).getDisplayValues();
+  const row = rows.find(r => str_(r[0]).toUpperCase() === target);
+  return row ? {id: str_(row[0]), name: str_(row[1])} : null;
 }
 
 /** 全程採 getDisplayValues，避免 0001 RFID 變成數字 1。 */

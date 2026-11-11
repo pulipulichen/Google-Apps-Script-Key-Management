@@ -137,7 +137,7 @@ test('multiple BORROWED loans show CONFLICT and never create another borrow or g
  const result=ret();
  assert.equal(result.ok,false);
  assert.match(result.message,/多筆未歸還/);
- assert.deepEqual(sheets.loan.rows,before);
+ assert.deepEqual(sheets.loan.rows.map(row => Array.from(row)), before);
 });
 
 test('different key ID formats (0010 and alphanumeric) stay exact across borrow and return',()=>{

@@ -49,7 +49,11 @@ test('initial scan ignored, in-flight double Enter ignored, background controls 
  let prevented=false,stopped=false;events.keydown.find(x=>x.capture).fn({target:{id:'borrow-scan'},preventDefault(){prevented=true;},stopImmediatePropagation(){stopped=true;}});
  assert.equal(prevented,true);assert.equal(stopped,true);
  calls[0].success({ok:false,message:'驗證失敗'});await pending;
- assert.equal(ui.state.signature,'data:image/png;base64,test');assert.equal(ui.state.pending,'0001');
+ assert.equal(ui.state.signature,'data:image/png;base64,test');
+ assert.equal(ui.state.selected,'0001');assert.equal(ui.state.pending,'');
+ assert.match(ui.state.borrowMessage.text,/重新感應鑰匙 RFID/);
+ assert.match(ui.borrowHtml(),/id="borrow-scan" value=""/);
+ assert.doesNotMatch(ui.borrowHtml(),/data-retry-borrow/);
  assert.equal(ui.transaction,null);assert.equal(elements.app.inert,false);
 });
 test('lost response stays locked; query confirms original success and dashboard failure keeps success',async()=>{
@@ -72,10 +76,27 @@ test('not found retries identical ID and payload; pending evidence never blindly
  assert.equal(calls[3].name,'borrowKey');assert.equal(calls[3].args[0],payload);
  calls[3].success({ok:false,message:'驗證失敗'});await second;
 });
-test('return errors retain scanned tag for retry',async()=>{
+test('return validation errors clear scanned tag and allow a new scan',async()=>{
  const {ui,calls}=setup();ui.state.page='return';const pending=ui.scan('return','0001');
  calls[0].success({ok:false,message:'找不到鑰匙'});await pending;
- assert.equal(ui.state.returnTag,'0001');assert.match(ui.returnHtml(),/value="0001"/);assert.match(ui.returnHtml(),/data-retry-return/);
+ assert.equal(ui.state.returnTag,'');
+ assert.match(ui.returnHtml(),/id="return-scan" value=""/);
+ assert.doesNotMatch(ui.returnHtml(),/data-retry-return/);
+ assert.match(ui.state.returnMessage.text,/找不到鑰匙/);
+ const next=ui.scan('return','0002');
+ assert.equal(calls[1].name,'returnKey');assert.equal(calls[1].args[0].scannedTag,'0002');
+ calls[1].success({ok:false,message:'找不到鑰匙'});await next;
+});
+test('unconfirmed return response retains tag until definitively rejected',async()=>{
+ const {ui,calls,elements}=setup();ui.state.page='return';
+ const pending=ui.scan('return','0001');
+ calls[0].failure({message:'offline'});await pending;
+ assert.equal(ui.state.returnTag,'0001');
+ assert.equal(ui.transaction.kind,'return');assert.equal(elements.app.inert,true);
+ const checking=ui.checkTransaction();
+ calls[1].success({ok:false,message:'找不到鑰匙'});await checking;
+ assert.equal(ui.state.returnTag,'');assert.equal(ui.transaction,null);
+ assert.equal(elements.app.inert,false);
 });
 
 test('duplicate loans show a distinct error badge and are never selectable',()=>{

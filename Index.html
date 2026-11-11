@@ -91,14 +91,22 @@
 const main=document.getElementById('main'),busy=document.getElementById('busy');
 const state={page:'borrow',keys:[],loading:true,working:false,selected:'',
   query:'',area:'全部',method:'SIGNATURE',signature:'',signed:false,person:'',memberVerifiedRfid:'',pending:'',
-  borrowMessage:null,returnMessage:null,returnResult:null,returnTag:'',statusQuery:'',statusFilter:'ALL',detail:''};
+  borrowMessage:null,returnMessage:null,returnResult:null,returnTag:'',statusQuery:'',statusFilter:'ALL',detail:'',dataIssues:[]};
 let scanTimer=null,personTimer=null,sequence=0,personSequence=0;
 let transaction=null,checking=false;
 const transactionStorageKey='key-management-pending-v1';
 const esc=x=>String(x===null||x===undefined?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const keyById=id=>state.keys.find(k=>k.id===id);
 const available=()=>state.keys.filter(k=>k.status==='AVAILABLE');
-const pill=k=>'<span class="pill '+(k.status==='AVAILABLE'?'free':'out')+'">'+(k.status==='AVAILABLE'?'可借用':'已借出')+'</span>';
+const pill=k=>{
+ const labels={AVAILABLE:'可借用',BORROWED:'已借出',CONFLICT:'借用紀錄異常',DATA_ERROR:'資料待查核'};
+ return '<span class="pill '+(k.status==='AVAILABLE'?'free':'out')+'">'+(labels[k.status]||'狀態不明')+'</span>';
+};
+const integrityWarning=()=>state.dataIssues.length
+ ? '<div class="alert error" role="alert">借用紀錄有無法對應的鑰匙 ID，已暫停借還。請管理員核對 Google Sheet 的 loan 資料。</div>'
+ : state.keys.some(k=>k.status==='CONFLICT')
+ ? '<div class="alert error" role="alert">有鑰匙存在多筆未歸還紀錄，已禁止該鑰匙再次借出與自動歸還，請管理員核對。</div>'
+ : '';
 const alertBox=m=>m?'<div class="alert '+m.type+'" role="status">'+esc(m.text)+'</div>':'';
 function blocked(){return state.working||!!transaction;}
 function setWorking(x){
@@ -125,7 +133,7 @@ function call(name,...args){return new Promise((resolve,reject)=>{
   catch(e){clearTimeout(timer);reject(e);}
 });}
 async function refresh(){
-  try{setWorking(true);const r=await call('getDashboard');state.keys=r.keys||[];state.loading=false;render();}
+  try{setWorking(true);const r=await call('getDashboard');state.keys=r.keys||[];state.dataIssues=r.dataIssues||[];state.loading=false;render();}
   catch(e){state.loading=false;errorMessage(e.message);}
   finally{setWorking(false);}
 }
@@ -150,7 +158,8 @@ function keyRows(mode){
  const search=(mode==='borrow'?state.query:state.statusQuery).trim().toLowerCase();
  const arr=state.keys.filter(k=>(mode==='status'||k.status==='AVAILABLE')&&
    (mode!=='borrow'||state.area==='全部'||state.area===k.area)&&
-   (mode!=='status'||state.statusFilter==='ALL'||k.status===state.statusFilter)&&
+   (mode!=='status'||state.statusFilter==='ALL'||k.status===state.statusFilter||
+     (state.statusFilter==='CONFLICT'&&k.status==='DATA_ERROR'))&&
    (k.name.toLowerCase().includes(search)||(k.area||'').toLowerCase().includes(search)));
  if(!arr.length)return '<div class="empty">沒有符合條件的鑰匙</div>';
  return arr.map(k=>'<button type="button" class="key '+((mode==='borrow'?state.selected:state.detail)===k.id?'selected':'')+'" data-key="'+esc(k.id)+'" data-mode="'+mode+'"><span style="font-size:22px">🔑</span><span style="flex:1;min-width:0"><div class="keyname">'+esc(k.name)+'</div><div class="keyarea">'+esc(k.area||'未分類')+'</div></span>'+pill(k)+'</button>').join('');
@@ -179,7 +188,7 @@ function checks(){
 }
 function borrowHtml(){
  return '<h2>借鑰匙</h2><p class="intro">選擇鑰匙 → 手寫簽名（預設）→ 點選 RFID 感應框並掃描，自動完成借出。</p>'+
- alertBox(state.borrowMessage)+
+ integrityWarning()+alertBox(state.borrowMessage)+
  '<div class="columns"><section class="card"><div class="title"><span class="step">1</span>選擇鑰匙 <span class="muted" style="margin-left:auto">'+available().length+' 把可借</span></div>'+
  '<input id="borrow-search" class="input" type="search" placeholder="🔍 搜尋鑰匙名稱或區域" value="'+esc(state.query)+'">'+filters()+
  '<div id="keylist" class="keylist">'+keyRows('borrow')+'</div></section>'+
@@ -189,7 +198,7 @@ function borrowHtml(){
 }
 function returnHtml(){
  return '<h2>還鑰匙</h2><p class="intro">只需感應鑰匙 RFID，不必選擇鑰匙、填寫人員資料或簽名。</p>'+
- '<section class="card returnbox"><div style="font-size:41px">📡</div><h2>感應鑰匙即可歸還</h2><p class="muted">自動完成登記，並告知管理人員應存放的位置。</p>'+
+ integrityWarning()+'<section class="card returnbox"><div style="font-size:41px">📡</div><h2>感應鑰匙即可歸還</h2><p class="muted">自動完成登記，並告知管理人員應存放的位置。</p>'+
  scanner('return')+'</section>'+
  (state.returnResult?'<section class="returnresult" role="status"><div style="font-size:18px;font-weight:800">'+(state.returnResult.alreadyReturned?'此鑰匙已是可借用狀態':'✓ 歸還成功')+'</div>'+
  '<div class="returnname">🔑 '+esc(state.returnResult.name)+'</div><div>區域：'+esc(state.returnResult.area||'未分類')+'</div>'+
@@ -199,15 +208,18 @@ function returnHtml(){
  state.returnMessage?'<div style="max-width:740px;margin:15px auto">'+alertBox(state.returnMessage)+(state.returnTag?'<button type="button" class="btn" data-retry-return>重試歸還</button>':'')+'</div>':'');
 }
 function statusHtml(){
- const count=state.keys.length-available().length,k=keyById(state.detail);
+ const count=state.keys.filter(k=>k.status==='BORROWED').length;
+ const anomalies=state.keys.filter(k=>['CONFLICT','DATA_ERROR'].includes(k.status)).length;
+ const k=keyById(state.detail);
  return '<h2>鑰匙狀況</h2><p class="intro">查看目前可借用及已借出的鑰匙。資料來自 Google Sheet。</p>'+
- '<div class="stats"><div class="stat">鑰匙總數<strong>'+state.keys.length+'</strong></div>'+
+ integrityWarning()+'<div class="stats"><div class="stat">鑰匙總數<strong>'+state.keys.length+'</strong></div>'+
  '<div class="stat">可借用<strong style="color:#059669">'+available().length+'</strong></div>'+
- '<div class="stat">已借出<strong style="color:#b45309">'+count+'</strong></div></div>'+
+ '<div class="stat">已借出<strong style="color:#b45309">'+count+'</strong></div>'+
+ (anomalies?'<div class="stat">資料異常<strong style="color:#b91c1c">'+anomalies+'</strong></div>':'')+'</div>'+
  '<button type="button" class="btn" data-refresh style="margin-bottom:14px">↻ 重新整理資料</button>'+
  '<div class="columns"><section class="card"><div class="title">鑰匙清單</div>'+
  '<input id="status-search" class="input" placeholder="🔍 搜尋名稱或區域" value="'+esc(state.statusQuery)+'">'+
- '<div class="filters">'+[['ALL','全部'],['AVAILABLE','可借用'],['BORROWED','已借出']].map(([v,t])=>'<button type="button" class="filter '+(state.statusFilter===v?'selected':'')+'" data-filter="'+v+'">'+t+'</button>').join('')+'</div>'+
+ '<div class="filters">'+[['ALL','全部'],['AVAILABLE','可借用'],['BORROWED','已借出'],['CONFLICT','資料異常']].map(([v,t])=>'<button type="button" class="filter '+(state.statusFilter===v?'selected':'')+'" data-filter="'+v+'">'+t+'</button>').join('')+'</div>'+
  '<div class="keylist" id="status-keys">'+keyRows('status')+'</div></section>'+
  '<section class="card"><div class="title">鑰匙詳細資訊</div>'+
  (k?'<h2 style="font-size:19px">'+esc(k.name)+'</h2><div style="margin-top:10px">'+pill(k)+'</div>'+
@@ -316,7 +328,7 @@ async function receiveTransaction(result){
    state.selected='';state.pending='';state.signature='';state.signed=false;state.person='';state.memberVerifiedRfid='';
  }else {state.returnResult=result;state.returnTag='';}
  // 寫入成功與儀表板讀取分開，避免把重新整理失敗顯示成交易失敗。
- try{state.keys=(await call('getDashboard')).keys||[];}
+ try{const dashboard=await call('getDashboard');state.keys=dashboard.keys||[];state.dataIssues=dashboard.dataIssues||[];}
  catch(e){
    if(current.kind==='borrow')state.borrowMessage.text+=' 狀態清單更新失敗，請稍後重新整理。';
    else state.returnMessage={type:'info',text:'歸還成功，狀態清單更新失敗，請稍後重新整理。'};

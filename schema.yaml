@@ -1,0 +1,83 @@
+# 鑰匙管理平台資料結構（人工參考用，Apps Script 不讀取此檔案）
+# 版本：1
+# 同一份 Google 試算表包含三張工作表，不是 SQL 資料庫。
+# 程式中的工作表名稱與欄位順序目前寫在 Code.gs，修改此 YAML 不會自動變更程式。
+version: 1
+spreadsheet:
+  id: "1vXwer7b9briUVHCn-wx-iyb6X-m62PNwQMnFPX7JItw"
+  title: "鑰匙管理資料庫"
+  timezone: "Asia/Taipei"
+  url: "https://docs.google.com/spreadsheets/d/1vXwer7b9briUVHCn-wx-iyb6X-m62PNwQMnFPX7JItw/edit"
+
+sheets:
+  key:
+    title: "key"
+    purpose: "鑰匙主檔；一把鑰匙一列"
+    header_row: 1
+    primary_key: "ID"
+    columns:
+      - {name: "ID", type: string, required: true, unique: true, notes: "鑰匙內部 ID，需以純文字保存前導零；預設也是鑰匙 RFID 掃描值，如 0001"}
+      - {name: "名稱", type: string, required: true, example: "會議室鑰匙"}
+      - {name: "區域", type: string, required: false, example: "行政區"}
+      - {name: "存放位置", type: string, required: false, example: "鑰匙櫃 A-01"}
+    optional_columns:
+      - {name: "RFID_UID", type: string, required: false, unique: true, notes: "若實際 RFID 與 ID 不同，才需在 E 欄或之後新增；留空則使用 ID"}
+    derived_fields:
+      status:
+        type: enum
+        values: ["AVAILABLE", "BORROWED"]
+        source: "loan 表中是否存在 status=BORROWED 的紀錄"
+        stored: false
+    example_rows:
+      - {ID: "0001", 名稱: "會議室鑰匙", 區域: "行政區", 存放位置: ""}
+      - {ID: "0002", 名稱: "實驗室鑰匙", 區域: "教學區", 存放位置: ""}
+      - {ID: "0003", 名稱: "倉庫鑰匙", 區域: "運動區", 存放位置: ""}
+
+  loan:
+    title: "loan"
+    purpose: "借還生命週期，一次借出對應一筆借用紀錄，歸還後更新同一列"
+    header_row: 1
+    primary_key: "loan_id"
+    columns:
+      - {name: "loan_id", type: uuid, required: true, unique: true}
+      - {name: "key_id", type: string, required: true, references: "key.ID"}
+      - {name: "borrowed_at", type: datetime, required: true}
+      - {name: "borrow_rfid_uid", type: string, required: false, notes: "借用人識別方式為人員 RFID 時，保存人員卡號；手寫簽名時留空"}
+      - {name: "borrow_signature_file_id", type: drive_file_id, required: false, notes: "借用人識別方式為簽名時，保存 PNG 在 Google Drive 的 file ID"}
+      - {name: "borrow_operator", type: string, required: false, notes: "保留供未來管理員操作紀錄使用"}
+      - {name: "returned_at", type: datetime, required: false}
+      - {name: "return_rfid_uid", type: string, required: false, notes: "歸還時掃描的鑰匙 RFID 值"}
+      - {name: "return_signature_file_id", type: drive_file_id, required: false, notes: "目前歸還無須簽名，保持空白"}
+      - {name: "return_operator", type: string, required: false, notes: "目前歸還無須人員識別，保持空白"}
+      - {name: "status", type: enum, required: true, values: ["BORROWED", "RETURNED"]}
+      - {name: "note", type: string, required: false}
+    invariants:
+      - "一把 key_id 在任一時間最多有一筆 BORROWED 紀錄"
+      - "借出必須有 borrow_rfid_uid 或 borrow_signature_file_id 任一資料"
+      - "歸還只需掃描鑰匙 RFID，歸還成功後更新 returned_at、return_rfid_uid 與 status"
+
+  log:
+    title: "log"
+    purpose: "成功的借出／歸還操作稽核紀錄（追加寫入）"
+    header_row: 1
+    primary_key: "id"
+    columns:
+      - {name: "id", type: uuid, required: true, unique: true}
+      - {name: "timestamp", type: datetime, required: true}
+      - {name: "action", type: enum, required: true, values: ["BORROW", "RETURN"]}
+      - {name: "key_id", type: string, required: true, references: "key.ID"}
+      - {name: "loan_id", type: uuid, required: true, references: "loan.loan_id"}
+      - {name: "rfid_uid", type: string, required: true, notes: "該次操作掃描的鑰匙 RFID（非人員 RFID）"}
+      - {name: "signature_file_id", type: drive_file_id, required: false}
+      - {name: "operator", type: string, required: false}
+      - {name: "status", type: enum, required: true, values: ["SUCCESS", "FAILED"], notes: "目前成功操作寫 SUCCESS；驗證失敗不會建立紀錄"}
+      - {name: "note", type: string, required: false}
+    notes:
+      - "若 loan 已成功更新但 log 寫入失敗，前端會顯示警告，不會把借還結果誤報為失敗"
+
+storage:
+  signature_files:
+    parent_folder_id: "1LO7B-j7AabHl8hSG23XAEyr0lCE6kp-c"
+    child_folder_name: "鑰匙借用簽名檔"
+    format: "image/png"
+    privacy: "不得公開分享含簽名的資料夾"

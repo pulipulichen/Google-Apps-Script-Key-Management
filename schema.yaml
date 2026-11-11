@@ -25,9 +25,10 @@ sheets:
     derived_fields:
       status:
         type: enum
-        values: ["AVAILABLE", "BORROWED"]
-        source: "loan 表中是否存在 status=BORROWED 的紀錄"
+        values: ["AVAILABLE", "BORROWED", "CONFLICT", "DATA_ERROR"]
+        source: "loan 表中未歸還 BORROWED 紀錄及其與 key.ID 的精確字串對應"
         stored: false
+        notes: "同一鑰匙有多筆 BORROWED 為 CONFLICT；存在未知 key_id 則全體資料待查核 DATA_ERROR；皆不得借出"
     example_rows:
       - {ID: "0001", 名稱: "會議室鑰匙", 區域: "行政區", 存放位置: ""}
       - {ID: "0002", 名稱: "實驗室鑰匙", 區域: "教學區", 存放位置: ""}
@@ -66,6 +67,8 @@ sheets:
       - {name: "note", type: string, required: false}
     invariants:
       - "一把 key_id 在任一時間最多有一筆 BORROWED 紀錄"
+      - "借用與稽核 key_id、RFID 都是純文字（保留 0001 前導零），不得由 Google Sheets 自動變為 1"
+      - "遇到資料矛盾或多筆未歸還借用時，應保留原始紀錄並暫停相關借還操作"
       - "借出必須有 borrow_rfid_uid 或 borrow_signature_file_id 任一資料"
       - "歸還只需掃描鑰匙 RFID，歸還成功後更新 returned_at、return_rfid_uid 與 status"
 
